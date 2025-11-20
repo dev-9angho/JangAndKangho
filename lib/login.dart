@@ -1,179 +1,147 @@
+// lib/login.dart
+
 import 'package:flutter/material.dart';
-import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:google_sign_in/google_sign_in.dart';
+import 'package:provider/provider.dart';
+import 'package:firebase_auth/firebase_auth.dart'; 
+import 'auth_service.dart'; // 경로는 필요에 따라 수정하세요 (예: 'auth_service.dart')
 
+class LoginPage extends StatelessWidget {
+  const LoginPage({super.key});
 
-
-class MyApp extends StatelessWidget {
-  const MyApp({Key? key}) : super(key: key);
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Google Sign-In Demo',
-      theme: ThemeData(
-        primarySwatch: Colors.blue,
-        useMaterial3: true,
-      ),
-      home: const AuthWrapper(),
+  void _showSnackbar(BuildContext context, String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
     );
   }
-}
 
-//순두부찌개
-class AuthWrapper extends StatelessWidget {
-  const AuthWrapper({Key? key}) : super(key: key);
+  // Google 로그인 버튼 액션
+  void _handleGoogleSignIn(BuildContext context) async {
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final User? user = await authService.signInWithGoogle();
 
-  @override
-  Widget build(BuildContext context) {
-    return StreamBuilder<User?>(
-      stream: FirebaseAuth.instance.authStateChanges(),
-      builder: (context, snapshot) {
-        // 데이터가 로딩 중일 때
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        
-        // 유저가 로그인된 상태라면 홈 화면으로
-        if (snapshot.hasData) {
-          return const HomePage();
-        }
-        
-        // 로그인이 안 된 상태라면 로그인 화면으로
-        return const LoginPage();
-      },
-    );
-  }
-}
+    if (!context.mounted) return; // context.mounted 체크 추가
 
-//구글 login 
-class AuthService {
-  final FirebaseAuth _auth = FirebaseAuth.instance;
-  final GoogleSignIn _googleSignIn = GoogleSignIn();
-
-  /// 구글 로그인 프로세스를 처리합니다.
-  Future<UserCredential?> signInWithGoogle() async {
-    try {
-      // 1. 구글 로그인 흐름 시작
-      final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
-      
-      if (googleUser == null) {
-        // 사용자가 로그인 창을 닫았을 때
-        return null; 
-      }
-
-      // 2. 인증 세부 정보 요청
-      final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
-
-      // 3. Firebase용 새 자격 증명 생성
-      final OAuthCredential credential = GoogleAuthProvider.credential(
-        idToken: googleAuth.idToken,
-      );
-
-      // 4. 자격 증명으로 Firebase 로그인
-      return await _auth.signInWithCredential(credential);
-      
-    } catch (e) {
-      debugPrint("로그인 에러 발생: $e");
-      return null;
+    if (user != null) {
+      _showSnackbar(context, "Google 로그인 성공!");
+    } else {
+      _showSnackbar(context, "Google 로그인 실패 또는 취소됨.");
     }
   }
 
-  /// 로그아웃을 처리합니다.
-  Future<void> signOut() async {
-    try {
-      await _googleSignIn.signOut(); // 구글 계정 로그아웃
-      await _auth.signOut(); // Firebase 로그아웃
-    } catch (e) {
-      debugPrint("로그아웃 에러 발생: $e");
+  // 게스트 로그인 버튼 액션
+  void _handleGuestSignIn(BuildContext context) async {
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final User? user = await authService.signInAnonymously();
+
+    if (!context.mounted) return; // context.mounted 체크 추가
+
+    if (user != null) {
+      _showSnackbar(context, "게스트로 로그인 성공! (UserID: ${user.uid})");
+    } else {
+      _showSnackbar(context, "게스트 로그인 실패.");
     }
   }
-}
-
-/// 로그인 화면 UI
-class LoginPage extends StatefulWidget {
-  const LoginPage({Key? key}) : super(key: key);
-
-  @override
-  State<LoginPage> createState() => _LoginPageState();
-}
-
-class _LoginPageState extends State<LoginPage> {
-  bool _isLoading = false;
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("로그인")),
-      body: Center(
-        child: _isLoading
-            ? const CircularProgressIndicator()
-            : ElevatedButton.icon(
-                icon: const Icon(Icons.login),
-                label: const Text("구글로 로그인"),
-                onPressed: () async {
-                  setState(() => _isLoading = true);
-                  
-                  // AuthService를 통해 로그인 시도
-                  await AuthService().signInWithGoogle();
-                  
-                  if (mounted) {
-                    setState(() => _isLoading = false);
-                  }
-                },
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                ),
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          // 1. 배경
+          Container(
+            color: const Color(0xFF1E0C42), // 어두운 보라색 계열 배경색
+            // Image.asset(...)을 사용하여 배경 이미지를 지정할 수 있습니다.
+          ),
+          
+          // 2. 중앙 콘텐츠
+          Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(32.0),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: <Widget>[
+                  // 'login' 텍스트
+                  const Text(
+                    'login',
+                    style: TextStyle(
+                      fontSize: 48,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                  const SizedBox(height: 30),
+
+                  Card(
+                    elevation: 10,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    color: Colors.white,
+                    child: Padding(
+                      padding: const EdgeInsets.all(24.0),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: <Widget>[
+                          const SizedBox(height: 10), 
+
+                          // Google 로그인 버튼 
+                          ElevatedButton(
+                            onPressed: () => _handleGoogleSignIn(context),
+                            style: ElevatedButton.styleFrom(
+                              minimumSize: const Size(double.infinity, 50),
+                              backgroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                side: const BorderSide(color: Colors.grey, width: 0.5),
+                              ),
+                              elevation: 1,
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                // Google 로고 (에셋이 없을 경우 대비)
+                                Image.asset(
+                                  'assets/google_logo.png', 
+                                  height: 24.0,
+                                  errorBuilder: (context, error, stackTrace) => const Icon(Icons.g_mobiledata, color: Colors.blue, size: 30),
+                                ),
+                                const SizedBox(width: 10),
+                                const Text(
+                                  'Google로 로그인',
+                                  style: TextStyle(fontSize: 18, color: Colors.black87),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 15),
+
+                          // 게스트 로그인 버튼
+                          ElevatedButton(
+                            onPressed: () => _handleGuestSignIn(context),
+                            style: ElevatedButton.styleFrom(
+                              minimumSize: const Size(double.infinity, 50),
+                              backgroundColor: const Color(0xFF7A4EC9), 
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              elevation: 1,
+                            ),
+                            child: const Text(
+                              '게스트로 시작하기',
+                              style: TextStyle(fontSize: 18, color: Colors.white),
+                            ),
+                          ),
+                          const SizedBox(height: 10), 
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
               ),
-      ),
-    );
-  }
-}
-
-/// 로그인 성공 후 보여질 홈 화면 UI
-class HomePage extends StatelessWidget {
-  const HomePage({Key? key}) : super(key: key);
-
-  @override
-  Widget build(BuildContext context) {
-    // 현재 로그인된 사용자 정보 가져오기
-    final user = FirebaseAuth.instance.currentUser;
-
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text("홈 화면"),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.logout),
-            onPressed: () async {
-              // 로그아웃 실행
-              await AuthService().signOut();
-            },
-          )
+            ),
+          ),
         ],
-      ),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            if (user?.photoURL != null)
-              CircleAvatar(
-                radius: 40,
-                backgroundImage: NetworkImage(user!.photoURL!),
-              ),
-            const SizedBox(height: 20),
-            Text(
-              "환영합니다, ${user?.displayName ?? '사용자'}님!",
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              "${user?.email}",
-              style: const TextStyle(color: Colors.grey),
-            ),
-          ],
-        ),
       ),
     );
   }
