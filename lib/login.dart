@@ -21,8 +21,7 @@ class MyApp extends StatelessWidget {
   }
 }
 
-/// 사용자의 인증 상태를 실시간으로 감지하여
-/// 로그인 화면 또는 홈 화면을 보여주는 위젯입니다.
+//순두부찌개
 class AuthWrapper extends StatelessWidget {
   const AuthWrapper({Key? key}) : super(key: key);
 
