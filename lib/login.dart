@@ -6,7 +6,7 @@ import 'screens/user_onboarding_screen.dart'; // 다음 단계: 온보딩 화면
 class LoginPage extends StatelessWidget {
   const LoginPage({super.key});
 
-  // 로그인 성공/실패 시 사용자에게 피드백을 주기 위한 함수
+  // 로그인 성공/실패 시 사용자에게 피드백을 주기 위한 함v수
   void _showSnackbar(BuildContext context, String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message)),
