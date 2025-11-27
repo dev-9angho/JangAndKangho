@@ -1,19 +1,13 @@
-// lib/screens/home_page.dart
-
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
+import 'package:cloud_functions/cloud_functions.dart';
+import 'package:url_launcher/url_launcher.dart';
+
 import 'auth_service.dart';
-import 'login.dart'; // 로그아웃 후 이동
-
-// 임시 수면 데이터 구조
-class SleepData {
-  final String day; // 요일 (Mon, Tue, ...)
-  final int score;  // 수면 점수 (0-100)
-  final String date; // 날짜 (mm/dd)
-
-  SleepData(this.day, this.score, this.date);
-}
+// 임시 데이터 관리를 위한 Firestore Import 유지 (실제 데이터 연동 시 사용)
+import 'package:cloud_firestore/cloud_firestore.dart'; 
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -23,472 +17,465 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  // 현재 선택된 하단 네비게이션 인덱스: 0=홈, 1=마이페이지, 2=수면분석
-  int _selectedIndex = 0; 
+  // AI 팁 상태 관리
+  String _aiTip = 'AI 수면 팁을 불러오는 중...';
   
-  // 주간 수면 패턴 데이터 (더미): 월요일부터 시작하며, 오늘(수요일)까지만 기록 가정
-  final List<SleepData> weeklySleepData = [
-    SleepData('월', 75, '11/18'),
-    SleepData('화', 60, '11/19'),
-    SleepData('수', 88, '11/20'), // 오늘 날짜
-    SleepData('목', 0, '11/21'),
-    SleepData('금', 0, '11/22'),
-    SleepData('토', 0, '11/23'),
-    SleepData('일', 0, '11/24'),
+  // 🌟 발전된 디자인을 위한 가상의 핵심 수면 지표 🌟
+  double _todayScore = 7.5; // 오늘의 핵심 수면 점수
+  final double _goalScore = 8.0; // 목표 수면 시간 (시간)
+
+  final List<Map<String, dynamic>> _detailedMetrics = [
+    {'title': '총 수면 시간', 'value': '7시간 30분', 'icon': Icons.access_time_filled, 'color': const Color(0xFF7A4EC9)},
+    {'title': '깊은 수면', 'value': '1시간 45분', 'icon': Icons.bedtime_rounded, 'color': const Color(0xFF1E0C42)},
+    {'title': 'REM 수면', 'value': '2시간 15분', 'icon': Icons.wb_sunny_outlined, 'color': const Color(0xFF5B39A3)},
   ];
 
-  void _onItemTapped(int index) {
+  // 주간 점수 데이터 (기존 복원 데이터 유지)
+  final List<Map<String, dynamic>> _weeklySleepData = [
+    {'day': '일', 'score': 6.5, 'color': const Color(0xFF7A4EC9)},
+    {'day': '월', 'score': 7.0, 'color': const Color(0xFF7A4EC9)},
+    {'day': '화', 'score': 5.8, 'color': const Color(0xFF5B39A3)},
+    {'day': '수', 'score': 7.5, 'color': const Color(0xFF1E0C42)},
+    {'day': '목', 'score': 6.2, 'color': const Color(0xFF7A4EC9)},
+    {'day': '금', 'score': 8.0, 'color': const Color(0xFF1E0C42)},
+    {'day': '토', 'score': 7.3, 'color': const Color(0xFF7A4EC9)},
+  ];
+
+  // Firebase Functions 호출 함수 (AI 수면 팁 가져오기)
+  Future<void> _fetchAiSleepTip() async {
     setState(() {
-      _selectedIndex = index;
+      _aiTip = '사용자 데이터를 분석하여 팁을 생성하고 있어요...';
     });
+    
+    // 현재 점수를 포함하여 AI 함수 호출
+    final userData = {
+      'latestScore': _todayScore, 
+      'averageScore': _weeklySleepData.map((e) => e['score'] as double).reduce((a, b) => a + b) / _weeklySleepData.length,
+      'sleepGoal': _goalScore, 
+    };
+
+    try {
+      final callable = FirebaseFunctions.instance.httpsCallable('getSleepTip');
+
+      final result = await callable.call(userData);
+      
+      final tip = result.data['tip'] as String? ?? '팁을 가져오는 데 실패했습니다.';
+
+      if (mounted) {
+        setState(() {
+          _aiTip = tip;
+        });
+      }
+    } on FirebaseFunctionsException catch (e) {
+      if (kDebugMode) {
+        print('Firebase Functions Error: ${e.code} - ${e.message}');
+      }
+      if (mounted) {
+        setState(() {
+          _aiTip = '팁 로딩 실패 (코드: ${e.code}). Firebase Functions 로그를 확인해 주세요.';
+        });
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('General Error: $e');
+      }
+      if (mounted) {
+        setState(() {
+          _aiTip = '알 수 없는 오류가 발생했습니다.';
+        });
+      }
+    }
   }
 
-  // 1. 메뉴창 항목 클릭 핸들러
-  void _handleDrawerItemClick(int index) {
-    Navigator.pop(context); // Drawer 닫기
-    if (index >= 0 && index <= 2) {
-      // 마이페이지(1), 수면 분석(2)으로 이동
-      setState(() {
-        _selectedIndex = index;
-      });
+  // URL 런치 함수
+  void _launchSleepInfoUrl() async {
+    const urlString = 'https://www.sleepfoundation.org/sleep-hygiene';
+    final uri = Uri.parse(urlString);
+
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
     } else {
-      // 기타 메뉴 항목 (설정, 노래, 수면 시작)
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('메뉴 ${index == 3 ? '설정' : index == 4 ? '수면 음악' : '수면 시작'} 기능은 개발 중입니다.')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('웹사이트를 열 수 없습니다: $urlString')),
+        );
+      }
     }
+  }
+  
+  // State 초기화 시 AI 팁 로딩 시작
+  @override
+  void initState() {
+    super.initState();
+    _fetchAiSleepTip(); 
   }
 
   @override
   Widget build(BuildContext context) {
-    final user = Provider.of<User?>(context);
     final authService = Provider.of<AuthService>(context, listen: false);
-
-    String displayName = user?.displayName ?? (user?.isAnonymous ?? false ? "게스트" : "사용자");
-    
-    // Main content widget list (하단 네비게이션에 따라 바뀔 화면)
-    final List<Widget> _widgetOptions = <Widget>[
-      _buildHomeScreenContent(context, displayName), // 홈
-      const Center(child: Text('마이페이지 화면', style: TextStyle(fontSize: 30, color: Color(0xFF1E0C42)))),
-      const Center(child: Text('수면 분석 화면', style: TextStyle(fontSize: 30, color: Color(0xFF1E0C42)))),
-    ];
+    final user = Provider.of<User?>(context);
 
     return Scaffold(
-      // 1. 상단 중앙 타이틀 및 좌측 메뉴 버튼 (AppBar)
-      appBar: AppBar(
-        title: const Text('SleepMate', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-        centerTitle: true,
-        backgroundColor: const Color(0xFF1E0C42),
-        elevation: 0,
-        iconTheme: const IconThemeData(color: Colors.white), // 메뉴 아이콘 색상
-      ),
+      drawer: _buildDrawer(context, authService, user),
       
-      // 1. 메뉴 창 (Drawer) 구현
-      drawer: _buildAppDrawer(context, authService, displayName),
-
-      // 메인 콘텐츠
-      body: _widgetOptions.elementAt(_selectedIndex),
-
-      // 5. 하단 Navigation Bar
-      bottomNavigationBar: BottomNavigationBar(
-        items: const <BottomNavigationBarItem>[
-          BottomNavigationBarItem(
-            icon: Icon(Icons.home_outlined),
-            label: '홈',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.person_outline),
-            label: '마이페이지',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.analytics_outlined),
-            label: '수면 분석',
+      appBar: AppBar(
+        title: const Text('Sleep Mate'),
+        backgroundColor: const Color(0xFF1E0C42),
+        foregroundColor: Colors.white,
+        elevation: 0,
+        actions: [
+          // 알림 아이콘
+          IconButton(
+            icon: const Icon(Icons.notifications_none),
+            onPressed: () {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('알림 기능은 준비 중입니다.')),
+              );
+            },
           ),
         ],
-        currentIndex: _selectedIndex,
-        selectedItemColor: const Color(0xFF7A4EC9), // 선택된 아이템 색상
-        unselectedItemColor: Colors.grey[600],
-        onTap: _onItemTapped,
-        backgroundColor: Colors.white,
-        elevation: 10,
+      ),
+      body: SingleChildScrollView( 
+        padding: const EdgeInsets.all(20.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            // 🌟 1. 메인 점수 및 원형 차트 섹션 🌟
+            _buildMainScoreCard(),
+            
+            const SizedBox(height: 25),
+
+            // 🌟 2. 상세 수면 지표 섹션 🌟
+            _buildDetailedMetrics(),
+
+            const SizedBox(height: 30),
+
+            // 주간 요약
+            const Text(
+              '주간 수면 성과',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF1E0C42)),
+            ),
+            const SizedBox(height: 15),
+
+            // 주간 요일별 수면 점수 그래프
+            _buildWeeklyScoreChart(),
+            
+            const SizedBox(height: 30),
+
+            // 🌟 3. AI 수면 팁 섹션 🌟
+            _buildAiTipCard(),
+
+            const SizedBox(height: 20),
+            
+            Center(
+              child: ElevatedButton.icon(
+                onPressed: _fetchAiSleepTip,
+                icon: const Icon(Icons.refresh),
+                label: const Text('새로운 AI 팁 받기'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF7A4EC9),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  // 홈 화면 콘텐츠 위젯
-  Widget _buildHomeScreenContent(BuildContext context, String displayName) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 10.0),
+  // 🌟 원형 차트가 포함된 메인 점수 카드 위젯 🌟
+  Widget _buildMainScoreCard() {
+    // 10점 만점 기준 진행률
+    double progress = _todayScore / 10.0;
+    
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E0C42), // 진한 보라색 배경
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.2),
+            spreadRadius: 1,
+            blurRadius: 10,
+            offset: const Offset(0, 5),
+          ),
+        ],
+      ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          // 2. 달 이미지 (Placeholder) 및 환영 메시지
-          Center(
-            child: Column(
+        children: [
+          const Text(
+            '오늘의 수면 점수',
+            style: TextStyle(fontSize: 18, color: Colors.white70),
+          ),
+          const SizedBox(height: 15),
+          SizedBox(
+            height: 150,
+            width: 150,
+            child: Stack(
+              alignment: Alignment.center,
               children: [
-                // 달 모양 Placeholder
-                Container(
-                  width: 120,
-                  height: 120,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF1E0C42).withOpacity(0.9), // 배경색
-                    shape: BoxShape.circle,
-                    boxShadow: [
-                      BoxShadow(color: const Color(0xFF7A4EC9).withOpacity(0.5), blurRadius: 15),
-                    ],
-                  ),
-                  child: Center(
-                    child: Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        const Icon(Icons.brightness_3, size: 70, color: Colors.white), // 큰 달
-                        Positioned(
-                          top: 25,
-                          left: 25,
-                          child: Icon(Icons.star, size: 10, color: Colors.yellow[300]),
-                        ),
-                        Positioned(
-                          bottom: 20,
-                          right: 15,
-                          child: Icon(Icons.star, size: 12, color: Colors.yellow[300]),
-                        ),
-                      ],
+                // 원형 진행률 표시기
+                CircularProgressIndicator(
+                  value: progress,
+                  strokeWidth: 10,
+                  backgroundColor: Colors.white24,
+                  valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF7A4EC9)),
+                ),
+                Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      '${_todayScore.toStringAsFixed(1)}',
+                      style: const TextStyle(
+                        fontSize: 48,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
                     ),
-                  ),
-                ),
-                const SizedBox(height: 15),
-                Text(
-                  '$displayName님, 오늘도 깊은 수면을 위해',
-                  style: TextStyle(fontSize: 18, color: Colors.grey[600]),
-                ),
-                const Text(
-                  'Sleep Mate와 함께하세요!',
-                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFF1E0C42)),
+                    Text(
+                      '/ 10점 만점',
+                      style: TextStyle(fontSize: 14, color: Colors.white54),
+                    ),
+                  ],
                 ),
               ],
             ),
           ),
-          const SizedBox(height: 30),
-
-          // 3. 주간 수면 패턴
-          _buildSectionTitle('주간 수면 패턴'),
-          _buildWeeklySleepChart(),
-          
-          const SizedBox(height: 30),
-          
-          // 수면 기록 시작 버튼 (메인 카드)
-          _buildMainFeatureCard(context),
-
-          const SizedBox(height: 30),
-
-          // 4. 광고/추천글 섹션
-          _buildSectionTitle('질 좋은 수면을 위한 추천'),
-          _buildRecommendationCard(
-            title: '수면 위생: 더 나은 수면을 위한 5가지 습관',
-            summary: '취침 시간 루틴, 카페인 관리, 운동 습관 등 전문가의 조언을 확인하세요.',
-            icon: Icons.article_outlined,
-            color: const Color(0xFF7A4EC9),
+          const SizedBox(height: 15),
+          Text(
+            _todayScore >= 7.0 ? '👍 목표 달성! 좋은 수면이었습니다.' : '🤔 조금 더 숙면이 필요해 보여요.',
+            style: const TextStyle(fontSize: 16, color: Colors.white),
           ),
-          _buildRecommendationCard(
-            title: '최신 건강 뉴스: 블루라이트와 수면의 관계',
-            summary: '잠들기 전 스마트폰 사용이 수면에 미치는 영향에 대한 연구 결과.',
-            icon: Icons.campaign_outlined,
-            color: Colors.teal,
-          ),
-          const SizedBox(height: 30),
-
-          // 4. 간단 수면 분석 박스
-          _buildSectionTitle('간단 수면 분석 요약'),
-          _buildSummaryAnalysisBox(),
-          
-          const SizedBox(height: 30),
         ],
       ),
     );
   }
+  
+  // 🌟 상세 수면 지표 위젯 🌟
+  Widget _buildDetailedMetrics() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          '상세 수면 지표',
+          style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF1E0C42)),
+        ),
+        const SizedBox(height: 10),
+        GridView.builder(
+          physics: const NeverScrollableScrollPhysics(), // ScrollView 중첩 방지
+          shrinkWrap: true,
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 3,
+            crossAxisSpacing: 10,
+            mainAxisSpacing: 10,
+            childAspectRatio: 0.8, // 카드의 세로 비율 조정
+          ),
+          itemCount: _detailedMetrics.length,
+          itemBuilder: (context, index) {
+            final metric = _detailedMetrics[index];
+            return _buildMetricTile(metric['title'] as String, metric['value'] as String, metric['icon'] as IconData, metric['color'] as Color);
+          },
+        ),
+      ],
+    );
+  }
+  
+  // 개별 수면 지표 타일 위젯
+  Widget _buildMetricTile(String title, String value, IconData icon, Color color) {
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Icon(icon, color: color, size: 30),
+            const SizedBox(height: 8),
+            Text(
+              value,
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: color),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 12, color: Colors.black54),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
-  // --- 위젯 빌더 함수 ---
 
-  // 1. Drawer (메뉴 창)
-  Widget _buildAppDrawer(BuildContext context, AuthService authService, String displayName) {
+  // 주간 점수 차트 위젯 (복원된 디자인 유지)
+  Widget _buildWeeklyScoreChart() {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(15),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withOpacity(0.1),
+            spreadRadius: 2,
+            blurRadius: 5,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: _weeklySleepData.map((data) => _buildScoreBar(data)).toList(),
+      ),
+    );
+  }
+
+  // 개별 점수 바 위젯
+  Widget _buildScoreBar(Map<String, dynamic> data) {
+    // 점수를 10점 만점으로 가정하고 높이 비율 계산
+    double score = data['score'] as double;
+    Color color = data['color'] as Color;
+    double normalizedHeight = score / 10.0; 
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          score.toStringAsFixed(1),
+          style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: color),
+        ),
+        const SizedBox(height: 5),
+        Container(
+          height: 100 * normalizedHeight, // 최대 높이 100으로 설정
+          width: 25,
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: const BorderRadius.only(
+              topLeft: Radius.circular(5),
+              topRight: Radius.circular(5),
+            ),
+          ),
+        ),
+        const SizedBox(height: 5),
+        Text(
+          data['day'] as String,
+          style: const TextStyle(fontSize: 14, color: Colors.black54),
+        ),
+      ],
+    );
+  }
+
+  // AI 팁 카드 위젯 
+  Widget _buildAiTipCard() {
+    return Card(
+      elevation: 5,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+      color: const Color(0xFFF7F4FF), // 연한 보라색 배경
+      child: Padding(
+        padding: const EdgeInsets.all(20.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Row(
+              children: [
+                Icon(Icons.lightbulb_outline, color: Color(0xFF7A4EC9), size: 24),
+                SizedBox(width: 8),
+                Text(
+                  '오늘의 AI 수면 팁',
+                  style: TextStyle(
+                    fontSize: 20, 
+                    fontWeight: FontWeight.bold, 
+                    color: Color(0xFF7A4EC9)
+                  ),
+                ),
+              ],
+            ),
+            const Divider(height: 20, thickness: 1, color: Color(0xFFE0D9F7)),
+            Text(
+              _aiTip,
+              style: const TextStyle(fontSize: 16, color: Colors.black87, height: 1.5),
+            ),
+            const SizedBox(height: 20),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                onPressed: _launchSleepInfoUrl,
+                icon: const Icon(Icons.link, size: 16),
+                label: const Text('수면 건강 정보 (Sleep Foundation)', style: TextStyle(fontWeight: FontWeight.w600)),
+                style: TextButton.styleFrom(foregroundColor: const Color(0xFF5B39A3)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // 메뉴 드로어 위젯 (복원 및 사용자 정보 표시)
+  Widget _buildDrawer(BuildContext context, AuthService authService, User? user) {
+    final displayEmail = user?.email ?? "게스트 모드";
+    final displayName = user?.displayName ?? "사용자님";
+
     return Drawer(
-      child: Column(
+      child: ListView(
+        padding: EdgeInsets.zero,
         children: <Widget>[
-          // 사용자 정보 헤더
           UserAccountsDrawerHeader(
-            accountName: Text(displayName, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            accountEmail: Text(FirebaseAuth.instance.currentUser?.email ?? '게스트 사용자', style: const TextStyle(fontSize: 14)),
-            currentAccountPicture: CircleAvatar(
+            accountName: Text(displayName, style: const TextStyle(fontWeight: FontWeight.bold)),
+            accountEmail: Text(displayEmail),
+            currentAccountPicture: const CircleAvatar(
               backgroundColor: Colors.white,
-              child: Text(displayName[0], style: const TextStyle(fontSize: 30, color: Color(0xFF1E0C42))),
+              child: Icon(Icons.person, color: Color(0xFF1E0C42)),
             ),
             decoration: const BoxDecoration(
               color: Color(0xFF1E0C42),
             ),
           ),
-          // 메뉴 항목들
-          _buildDrawerItem(icon: Icons.home_outlined, title: '홈', index: 0, onTap: () => _handleDrawerItemClick(0)),
-          _buildDrawerItem(icon: Icons.settings_outlined, title: '설정', index: 3, onTap: () => _handleDrawerItemClick(3)),
-          _buildDrawerItem(icon: Icons.person_outline, title: '마이페이지', index: 1, onTap: () => _handleDrawerItemClick(1)),
-          _buildDrawerItem(icon: Icons.music_note_outlined, title: '수면 음악', index: 4, onTap: () => _handleDrawerItemClick(4)),
-          _buildDrawerItem(icon: Icons.play_circle_outline, title: '수면 시작', index: 5, onTap: () => _handleDrawerItemClick(5)),
-          _buildDrawerItem(icon: Icons.analytics_outlined, title: '수면 분석', index: 2, onTap: () => _handleDrawerItemClick(2)),
-          
-          const Spacer(), // 하단에 로그아웃 버튼 위치시키기 위해 사용
-
-          // 로그아웃 버튼
-          Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: ListTile(
-              leading: const Icon(Icons.logout, color: Colors.red),
-              title: const Text('로그아웃', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
-              onTap: () async {
-                await authService.signOut();
-                if (mounted) {
-                  // 로그아웃 후 로그인 페이지로 이동 (뒤로 가기 스택 모두 제거)
-                  Navigator.of(context).pushAndRemoveUntil(
-                    MaterialPageRoute(builder: (context) => const LoginPage()), 
-                    (Route<dynamic> route) => false,
-                  );
-                }
-              },
-            ),
+          ListTile(
+            leading: const Icon(Icons.home, color: Color(0xFF7A4EC9)),
+            title: const Text('홈'),
+            onTap: () {
+              Navigator.pop(context); 
+            },
           ),
-        ],
-      ),
-    );
-  }
-  
-  Widget _buildDrawerItem({required IconData icon, required String title, required int index, required VoidCallback onTap}) {
-    return ListTile(
-      leading: Icon(icon, color: _selectedIndex == index ? const Color(0xFF7A4EC9) : const Color(0xFF1E0C42)),
-      title: Text(
-        title, 
-        style: TextStyle(
-          fontWeight: _selectedIndex == index ? FontWeight.bold : FontWeight.normal,
-          color: _selectedIndex == index ? const Color(0xFF7A4EC9) : Colors.black87,
-        ),
-      ),
-      onTap: onTap,
-    );
-  }
-
-
-  Widget _buildSectionTitle(String title) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12.0, top: 8.0),
-      child: Text(
-        title,
-        style: const TextStyle(
-          fontSize: 20,
-          fontWeight: FontWeight.bold,
-          color: Color(0xFF1E0C42),
-        ),
-      ),
-    );
-  }
-  
-  // 3. 주간 수면 패턴 차트
-  Widget _buildWeeklySleepChart() {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 15),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(15),
-        boxShadow: [
-          BoxShadow(color: Colors.grey.withOpacity(0.2), blurRadius: 8, offset: const Offset(0, 4)),
-        ],
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceAround,
-        children: weeklySleepData.map((data) => _buildDayScoreGauge(data)).toList(),
-      ),
-    );
-  }
-
-  // 3. 개별 요일 수면 점수 게이지 (시계바늘 게이지 느낌)
-  Widget _buildDayScoreGauge(SleepData data) {
-    Color color;
-    if (data.score == 0) {
-      color = Colors.grey[300]!;
-    } else if (data.score >= 80) {
-      color = Colors.green;
-    } else if (data.score >= 60) {
-      color = Colors.orange;
-    } else {
-      color = Colors.red;
-    }
-
-    final double gaugeValue = data.score / 100.0;
-    final isToday = data.date == '11/20'; 
-
-    return Column(
-      children: [
-        // 게이지 + 달 아이콘
-        Stack(
-          alignment: Alignment.center,
-          children: [
-            SizedBox(
-              width: 50,
-              height: 50,
-              child: CircularProgressIndicator(
-                value: gaugeValue,
-                backgroundColor: const Color(0xFFE5E0F0),
-                valueColor: AlwaysStoppedAnimation<Color>(color),
-                strokeWidth: 5.0,
-              ),
-            ),
-            Icon(Icons.brightness_3, size: 22, color: data.score > 0 ? color : Colors.grey[500]),
-            if (isToday) 
-              Positioned(
-                top: 0,
-                right: 0,
-                child: Icon(Icons.star, size: 10, color: const Color(0xFF7A4EC9)), // 오늘 표시
-              )
-          ],
-        ),
-        const SizedBox(height: 8),
-        // 요일
-        Text(data.day, style: TextStyle(fontWeight: isToday ? FontWeight.bold : FontWeight.normal, color: isToday ? const Color(0xFF1E0C42) : Colors.black87, fontSize: 16)),
-        // 날짜
-        Text(data.date, style: TextStyle(fontSize: 12, color: Colors.grey[600])),
-      ],
-    );
-  }
-
-  // 수면 기록 시작 버튼 (메인 카드)
-  Widget _buildMainFeatureCard(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(20.0),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1E0C42),
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.2),
-            blurRadius: 15,
-            offset: const Offset(0, 8),
+          ListTile(
+            leading: const Icon(Icons.assessment, color: Color(0xFF7A4EC9)),
+            title: const Text('수면 분석 리포트'),
+            onTap: () {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('수면 분석 리포트 페이지로 이동합니다.')),
+              );
+              Navigator.pop(context); 
+            },
           ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            '지금 바로 수면을 기록하세요',
-            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white),
+          ListTile(
+            leading: const Icon(Icons.settings, color: Color(0xFF7A4EC9)),
+            title: const Text('설정'),
+            onTap: () {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('설정 페이지로 이동합니다.')),
+              );
+              Navigator.pop(context);
+            },
           ),
-          const SizedBox(height: 10),
-          const Text(
-            '수면 기록을 시작하고 정확한 수면 분석 데이터를 받아보세요.',
-            style: TextStyle(fontSize: 16, color: Colors.white70),
+          const Divider(),
+          ListTile(
+            leading: const Icon(Icons.logout, color: Colors.redAccent),
+            title: const Text('로그아웃'),
+            onTap: () async {
+              Navigator.pop(context); 
+              await authService.signOut();
+            },
           ),
-          const SizedBox(height: 20),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              icon: const Icon(Icons.bedtime_outlined, color: Color(0xFF1E0C42), size: 28),
-              label: const Text('수면 기록 시작', style: TextStyle(fontSize: 18, color: Color(0xFF1E0C42), fontWeight: FontWeight.bold)),
-              onPressed: () {
-                _handleDrawerItemClick(5); // Drawer의 '수면 시작'과 동일한 동작
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF7A4EC9).withOpacity(0.9), // 밝은 보라색 버튼
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-                padding: const EdgeInsets.symmetric(vertical: 15),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // 4. 추천/광고 카드
-  Widget _buildRecommendationCard({required String title, required String summary, required IconData icon, required Color color}) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10.0),
-      child: Card(
-        elevation: 1,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-        child: ListTile(
-          contentPadding: const EdgeInsets.all(12),
-          leading: Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: color.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Icon(icon, color: color, size: 30),
-          ),
-          title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Color(0xFF1E0C42))),
-          subtitle: Padding(
-            padding: const EdgeInsets.only(top: 4.0),
-            child: Text(summary, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(color: Colors.grey[700])),
-          ),
-          trailing: const Icon(Icons.chevron_right, size: 24, color: Colors.grey),
-          onTap: () {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('\'$title\' 자세히 보기 기능은 개발 중입니다.')),
-            );
-          },
-        ),
-      ),
-    );
-  }
-
-  // 4. 간단 수면 분석 요약 박스
-  Widget _buildSummaryAnalysisBox() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(20.0),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(15),
-        border: Border.all(color: const Color(0xFFE5E0F0), width: 1),
-        boxShadow: [
-          BoxShadow(color: Colors.grey.withOpacity(0.1), blurRadius: 10, offset: const Offset(0, 5)),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            '어제 수면 요약',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF1E0C42)),
-          ),
-          const Divider(height: 25, thickness: 1, color: Color(0xFFE5E0F0)),
-          _buildSummaryItem('총 수면 시간', '6시간 45분', Icons.timer_outlined),
-          _buildSummaryItem('수면 효율', '88%', Icons.check_circle_outline, Colors.green),
-          _buildSummaryItem('깊은 수면', '1시간 20분', Icons.bed_outlined),
-          _buildSummaryItem('개선 필요', '취침 불규칙', Icons.warning_amber_outlined, Colors.red),
-          
-          const SizedBox(height: 10),
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton(
-              onPressed: () => _onItemTapped(2),
-              child: const Text(
-                '수면 분석 상세 보기 >',
-                style: TextStyle(color: Color(0xFF7A4EC9), fontWeight: FontWeight.bold),
-              ),
-            ),
-          )
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSummaryItem(String title, String value, IconData icon, [Color? color]) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6.0),
-      child: Row(
-        children: [
-          Icon(icon, size: 20, color: color ?? const Color(0xFF1E0C42)),
-          const SizedBox(width: 15),
-          Expanded(child: Text(title, style: const TextStyle(fontSize: 16, color: Colors.black87))),
-          Text(value, style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: color ?? Colors.black)),
         ],
       ),
     );
