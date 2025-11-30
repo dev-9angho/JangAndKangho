@@ -1,3 +1,9 @@
+plugins {
+    // ... 다른 플러그인들
+    
+    // Add the dependency for the Google services Gradle plugin
+    id("com.google.gms.google-services") version "4.4.4" apply false // <--- 이 라인을 추가
+}
 allprojects {
     repositories {
         google()

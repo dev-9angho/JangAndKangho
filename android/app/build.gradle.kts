@@ -3,6 +3,7 @@ plugins {
     id("kotlin-android")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
+    id("com.google.gms.google-services") 
 }
 
 android {
@@ -41,4 +42,20 @@ android {
 
 flutter {
     source = "../.."
+}
+// dependencies 블록을 파일 끝에 추가
+dependencies {
+    // Import the Firebase BoM (Bill of Materials)
+    // 이 버전을 확인하여 최신 버전으로 업데이트하는 것이 좋습니다.
+    implementation(platform("com.google.firebase:firebase-bom:34.5.0"))
+    // TODO: 사용할 Firebase 제품의 종속성을 추가합니다.
+    // When using the BoM, do not specify versions in Firebase dependencies
+
+    // 예시: Firebase Analytics (가장 기본)
+    implementation("com.google.firebase:firebase-analytics")
+    // 예시: Firebase Authentication
+    // implementation("com.google.firebase:firebase-auth-ktx")
+
+    // 예시: Cloud Firestore
+    // implementation("com.google.firebase:firebase-firestore-ktx")
 }
