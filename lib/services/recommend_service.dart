@@ -65,8 +65,9 @@ class RecommendationService {
       }
 
       // 상황별 로컬 데이터 (API 실패 시)
-      if (hours < 5) return _getInsomniaArticles();
-      else if (hours > 9) return _getOversleepArticles();
+      if (hours < 5) {
+        return _getInsomniaArticles();
+      } else if (hours > 9) return _getOversleepArticles();
       else return _getHealthyArticles();
 
     } catch (e) {
@@ -77,7 +78,7 @@ class RecommendationService {
 
   Future<List<Article>> _fetchHealthNews() async {
     try {
-      // 한국(kr) 건강(health) 뉴스 요청
+      // 한국 건강(health) 뉴스 요청
 final url = '$_baseUrl/top-headlines?country=us&category=health&apiKey=$_apiKey';
       final response = await http.get(Uri.parse(url));
 

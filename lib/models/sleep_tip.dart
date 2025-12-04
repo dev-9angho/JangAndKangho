@@ -1,5 +1,4 @@
 // lib/models/sleep_tip.dart
-// Firebase Functions에서 반환되는 구조화된 JSON 데이터에 대응하는 Dart 모델입니다.
 
 class SleepTip {
   final String title;

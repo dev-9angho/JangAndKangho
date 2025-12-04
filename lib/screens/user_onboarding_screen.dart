@@ -22,7 +22,7 @@ class _UserOnboardingScreenState extends State<UserOnboardingScreen> {
   String _gender = 'MALE'; // 성별: MALE, FEMALE
   bool _hasCaffeine = false; // 카페인 유무
   bool _hasSmoke = false;    // 흡연 유무
-  List<String> _selectedHabits = []; // 수면 습관 (복수 선택)
+  final List<String> _selectedHabits = []; // 수면 습관 (복수 선택)
   String _goal = '';             // 성취 목표
 
   // 수면 습관 옵션 (사진을 대체하는 텍스트/아이콘)
@@ -307,7 +307,7 @@ class _UserOnboardingScreenState extends State<UserOnboardingScreen> {
             Switch(
               value: value,
               onChanged: onChanged,
-              activeColor: const Color(0xFF7A4EC9),
+              activeThumbColor: const Color(0xFF7A4EC9),
               inactiveThumbColor: Colors.grey[300],
             ),
           ],

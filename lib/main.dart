@@ -11,14 +11,9 @@ import 'login.dart';
 import 'home.dart';
 import 'screens/user_onboarding_screen.dart'; // ⭐️ 추가
 
-// ⚠️ 실제 Firebase 설정 파일을 프로젝트에 추가해야 합니다.
-// (예: android/app/google-services.json, ios/Runner/GoogleService-Info.plist)
-// 여기서는 임시로 Dart 파일 내에서 초기화를 시도하지만,
-// 실제 Flutter + Firebase 프로젝트에서는 플랫폼별 설정이 필수입니다.
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   try {
-    // ⚠️ Firebase 초기화: 실제 프로젝트에서는 platform-specific 설정을 통해
     // 이 초기화가 성공적으로 이루어져야 합니다.
     await Firebase.initializeApp();
     debugPrint("Firebase 초기화 성공.");
