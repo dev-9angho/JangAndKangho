@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:lottie/lottie.dart';
 
 class MyPage extends StatelessWidget {
   const MyPage({super.key});
@@ -69,41 +70,51 @@ class MyPage extends StatelessWidget {
             child: Column(
               children: [
                 // 상단 프로필 헤더
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.only(bottom: 30, top: 20),
-                  decoration: const BoxDecoration(
-                    color: Color(0xFF1E0C42),
-                    borderRadius: BorderRadius.only(
-                      bottomLeft: Radius.circular(30),
-                      bottomRight: Radius.circular(30),
-                    ),
-                  ),
-                  child: Column(
-                    children: [
-                      CircleAvatar(
-                        radius: 50,
-                        backgroundColor: Colors.white,
-                        child: Text(
-                          user.displayName != null && user.displayName!.isNotEmpty
-                              ? user.displayName![0]
-                              : 'U',
-                          style: const TextStyle(fontSize: 40, color: Color(0xFF1E0C42)),
-                        ),
-                      ),
-                      const SizedBox(height: 15),
-                      Text(
-                        user.displayName ?? '익명 사용자',
-                        style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white),
-                      ),
-                      Text(
-                        user.email ?? '이메일 없음',
-                        style: const TextStyle(color: Colors.white70),
-                      ),
-                    ],
+                // 상단 프로필 헤더
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.only(bottom: 30, top: 20),
+                decoration: const BoxDecoration(
+                  color: Color(0xFF1E0C42),
+                  borderRadius: BorderRadius.only(
+                    bottomLeft: Radius.circular(30),
+                    bottomRight: Radius.circular(30),
                   ),
                 ),
-                
+                child: Column(
+                  children: [
+                    // 1. Lottie 프로필 이미지
+                    SizedBox(
+                      width: 120,
+                      height: 120,
+                      child: Lottie.asset(
+                        'assets/Lottie.json', // 파일 경로 확인 필요
+                        fit: BoxFit.cover,
+                        repeat: true,
+                      ),
+                    ),
+                    
+                    // 2. 간격 추가 (빠져있던 부분)
+                    const SizedBox(height: 15),
+
+                    // 3. 이름 텍스트 복구 (빠져있던 부분)
+                    Text(
+                      user.displayName != null ? '일반 사용자' : '익명 사용자',
+                      style: const TextStyle(
+                        fontSize: 24, 
+                        fontWeight: FontWeight.bold, 
+                        color: Colors.white
+                      ),
+                    ),
+
+                    // 4. 이메일 텍스트 복구 (빠져있던 부분)
+                    Text(
+                      user.email ?? '이메일 없음',
+                      style: const TextStyle(color: Colors.white70),
+                    ),
+                  ],
+                ),
+              ),
                 const SizedBox(height: 20),
 
                 // 상세 정보 카드

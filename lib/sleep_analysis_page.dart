@@ -1,7 +1,10 @@
+import 'dart:io'; // [추가] 파일 목록 확인용
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:path_provider/path_provider.dart'; // [추가] 경로 확인용
+import 'package:audioplayers/audioplayers.dart'; // [추가] 재생용
 
 // 일간 데이터를 다루기 위한 헬퍼 클래스
 class DailySleepData {
@@ -26,6 +29,67 @@ class SleepAnalysisPage extends StatefulWidget {
 class _SleepAnalysisPageState extends State<SleepAnalysisPage> {
   final user = FirebaseAuth.instance.currentUser;
   final List<String> weekDays = ['월', '화', '수', '목', '금', '토', '일'];
+
+  // [추가] 오디오 플레이어 관련 변수
+  final AudioPlayer _audioPlayer = AudioPlayer();
+  String? _playingPath; 
+
+  // [추가] 페이지 종료 시 플레이어 정리
+  @override
+  void dispose() {
+    _audioPlayer.dispose();
+    super.dispose();
+  }
+
+Future<List<FileSystemEntity>> _getSleepTalkFiles() async {
+  final dir = await getApplicationDocumentsDirectory();
+  final List<FileSystemEntity> files = dir.listSync().where((file) {
+    // 🚨 확장자 .wav로 수정
+    return file.path.endsWith('_highlight.m4a');
+  }).toList();
+
+  files.sort((a, b) => b.path.compareTo(a.path));
+  return files;
+}
+
+  // [추가] 
+Future<void> _toggleAudio(String path) async {
+    // 🔍 [디버깅용] 파일 크기 확인 코드
+    final file = File(path);
+    if (await file.exists()) {
+      final size = await file.length();
+      print("📂 재생 파일 경로: $path");
+      print("📏 파일 크기: $size bytes"); // 이 로그를 확인하세요!
+      
+      if (size < 1000) {
+        print("⚠️ 파일이 너무 작습니다! 녹음이 제대로 안 된 것 같습니다.");
+        return; // 재생 안 함
+      }
+    } else {
+      print("❌ 파일이 존재하지 않습니다.");
+      return;
+    }
+  try {
+    if (_playingPath == path) {
+      await _audioPlayer.stop();
+      setState(() => _playingPath = null);
+    } else {
+      await _audioPlayer.stop();
+
+      // 🔊 볼륨 최대로 설정
+      await _audioPlayer.setVolume(1.0); 
+
+      await _audioPlayer.play(DeviceFileSource(path));
+      setState(() => _playingPath = path);
+
+      _audioPlayer.onPlayerComplete.listen((_) {
+        if (mounted) setState(() => _playingPath = null);
+      });
+    }
+  } catch (e) {
+    print("재생 오류: $e");
+  }
+}
 
   @override
   Widget build(BuildContext context) {
@@ -126,11 +190,11 @@ class _SleepAnalysisPageState extends State<SleepAnalysisPage> {
 
                   int diffSnore = latest.totalSnore - previous.totalSnore;
                   if (diffSnore > 0) {
-                     snoreComparisonText = "직전보다 코골이가 총 $diffSnore회 늘었습니다.";
+                      snoreComparisonText = "직전보다 코골이가 총 $diffSnore회 늘었습니다.";
                   } else if (diffSnore < 0) {
-                     snoreComparisonText = "직전보다 코골이가 총 ${diffSnore.abs()}회 줄었습니다! 👍";
+                      snoreComparisonText = "직전보다 코골이가 총 ${diffSnore.abs()}회 줄었습니다! 👍";
                   } else {
-                     snoreComparisonText = "코골이 횟수가 지난번과 같습니다.";
+                      snoreComparisonText = "코골이 횟수가 지난번과 같습니다.";
                   }
                 } else if (dailyList.isNotEmpty) {
                   scoreComparisonText = "첫 기록이네요! 내일 비교 분석을 확인해보세요.";
@@ -147,16 +211,11 @@ class _SleepAnalysisPageState extends State<SleepAnalysisPage> {
                   if (chartSnoreMap[weekday] == 0) chartSnoreMap[weekday] = dayData.totalSnore;
                 }
 
-                // ---------------------------------------------------------
-                // [수정된 부분] 코골이 최대값 계산하여 차트 높이(maxY) 동적 설정
-                // ---------------------------------------------------------
                 int maxSnoreCount = 0;
                 for (var count in chartSnoreMap.values) {
                   if (count > maxSnoreCount) maxSnoreCount = count;
                 }
-                // 최대값보다 5만큼 더 높게 설정 (최소 20)
                 double dynamicMaxY = maxSnoreCount > 0 ? (maxSnoreCount + 5).toDouble() : 20.0;
-                // ---------------------------------------------------------
 
                 return SingleChildScrollView(
                   padding: const EdgeInsets.all(20),
@@ -179,12 +238,22 @@ class _SleepAnalysisPageState extends State<SleepAnalysisPage> {
                         style: TextStyle(color: Colors.white70, fontSize: 16, fontWeight: FontWeight.bold)),
                       const SizedBox(height: 15),
                       
-                      // [수정] 여기서 계산된 dynamicMaxY를 넘겨줍니다.
                       _buildBarChartCard(chartSnoreMap, dynamicMaxY),
 
                       const SizedBox(height: 20),
                       _buildInsightBubble(snoreComparisonText, Icons.mic_none),
-                      const SizedBox(height: 20),
+
+                      // ----------------------------------------------------
+                      // [추가] 잠꼬대 리스트 섹션
+                      // ----------------------------------------------------
+                      const SizedBox(height: 40),
+                      const Text("감지된 잠꼬대 기록 🎙️", 
+                        style: TextStyle(color: Colors.white70, fontSize: 16, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 15),
+                      
+                      _buildSleepTalkList(), // 아래에 정의된 함수 호출
+
+                      const SizedBox(height: 40), // 바닥 여백
                     ],
                   ),
                 );
@@ -193,7 +262,67 @@ class _SleepAnalysisPageState extends State<SleepAnalysisPage> {
     );
   }
 
-  // --- 차트 위젯 ---
+  // --- [추가] 잠꼬대 리스트 빌더 함수 ---
+  Widget _buildSleepTalkList() {
+    return FutureBuilder<List<FileSystemEntity>>(
+      future: _getSleepTalkFiles(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData || snapshot.data!.isEmpty) {
+          return Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: const Color(0xFF252540),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: const Text("아직 기록된 잠꼬대가 없습니다.", style: TextStyle(color: Colors.white54), textAlign: TextAlign.center),
+          );
+        }
+
+        return ListView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: snapshot.data!.length,
+          itemBuilder: (context, index) {
+            final file = snapshot.data![index];
+            final fileName = file.path.split('/').last;
+            final timestampStr = fileName.split('_')[0];
+            final dateTime = DateTime.fromMillisecondsSinceEpoch(int.tryParse(timestampStr) ?? 0);
+            final dateStr = "${dateTime.month}/${dateTime.day} ${dateTime.hour}:${dateTime.minute.toString().padLeft(2,'0')}";
+            
+            final isPlaying = _playingPath == file.path;
+
+            return Container(
+              margin: const EdgeInsets.only(bottom: 10),
+              decoration: BoxDecoration(
+                color: const Color(0xFF252540),
+                borderRadius: BorderRadius.circular(15),
+                border: isPlaying ? Border.all(color: const Color(0xFF7A4EC9), width: 1.5) : null,
+              ),
+              child: ListTile(
+                leading: CircleAvatar(
+                  backgroundColor: isPlaying ? const Color(0xFF7A4EC9) : Colors.white10,
+                  child: Icon(isPlaying ? Icons.pause : Icons.play_arrow, color: Colors.white),
+                ),
+                title: Text(dateStr, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                subtitle: const Text("잠꼬대 의심 (5초)", style: TextStyle(color: Colors.white54, fontSize: 12)),
+                trailing: IconButton(
+                  icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                  onPressed: () async {
+                    await file.delete();
+                    setState(() {}); 
+                  },
+                ),
+                onTap: () => _toggleAudio(file.path),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // --- 기존 차트 위젯들 ---
 
   Widget _buildLineChartCard(Map<int, int> dataMap) {
     return Container(
@@ -275,8 +404,6 @@ class _SleepAnalysisPageState extends State<SleepAnalysisPage> {
     );
   }
 
-  // [수정됨] maxY를 인자로 받아서 차트 높이로 사용
-// [수정] maxY 인자 추가
   Widget _buildBarChartCard(Map<int, int> dataMap, double maxY) {
     return Container(
       height: 220,
@@ -289,10 +416,7 @@ class _SleepAnalysisPageState extends State<SleepAnalysisPage> {
       child: BarChart(
         BarChartData(
           alignment: BarChartAlignment.spaceAround,
-          
-          // [수정] 고정값 20 대신 받아온 maxY 사용
           maxY: maxY, 
-          
           barTouchData: BarTouchData(
             touchTooltipData: BarTouchTooltipData(
               getTooltipColor: (_) => Colors.blueGrey,
@@ -334,10 +458,7 @@ class _SleepAnalysisPageState extends State<SleepAnalysisPage> {
                   borderRadius: BorderRadius.circular(4),
                   backDrawRodData: BackgroundBarChartRodData(
                     show: true,
-                    
-                    // [수정] 배경 막대 높이도 maxY에 맞춰야 비율이 맞습니다.
                     toY: maxY, 
-                    
                     color: Colors.white.withOpacity(0.05),
                   ),
                 ),
@@ -348,6 +469,7 @@ class _SleepAnalysisPageState extends State<SleepAnalysisPage> {
       ),
     );
   }
+
   Widget _buildInsightBubble(String text, IconData icon) {
     return Container(
       width: double.infinity,

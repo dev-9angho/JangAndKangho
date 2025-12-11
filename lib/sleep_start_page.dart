@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:ui'; 
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'services/snore_detection_service.dart'; // 위에서 만든 서비스 임포트
+import 'package:wakelock_plus/wakelock_plus.dart'; 
+import 'services/snore_detection_service.dart';
 
 class SleepRecordingScreen extends StatefulWidget {
   const SleepRecordingScreen({super.key});
@@ -13,72 +15,111 @@ class SleepRecordingScreen extends StatefulWidget {
 }
 
 class _SleepRecordingScreenState extends State<SleepRecordingScreen> {
-  // 타이머 관련
   Timer? _timer;
   int _secondsElapsed = 0;
-  bool _isPaused = false;
+  bool _isPaused = true;
   late DateTime _startTime;
 
-  // AI 분석 관련
   final SnoreDetectionService _aiService = SnoreDetectionService();
-  StreamSubscription? _aiSubscription; // AI 결과 구독자
-  int _snoreCount = 0; // 감지된 코골이 횟수
-  String _currentSound = "분석 대기 중..."; // 현재 들리는 소리 (UI 표시용)
+  StreamSubscription? _aiSubscription;
+  
+  int _snoreCount = 0;
+  int _sleepTalkCount = 0;
+  String _currentSound = "초기화 중...";
 
   @override
   void initState() {
     super.initState();
     _startTime = DateTime.now();
-    _initAI(); // AI 및 타이머 시작
+    _initAI();
   }
 
   Future<void> _initAI() async {
-    // 마이크 권한 요청
-    if (await Permission.microphone.request().isGranted) {
-      // 1.타이머 시작
+    // [안전장치 1] 화면 꺼짐 방지 시도 (실패해도 앱은 죽지 않게 try-catch)
+    try {
+      await WakelockPlus.enable();
+    } catch (e) {
+      print("⚠️ Wakelock 오류 (무시 가능): $e");
+    }
 
-      _startTimer();
+    var status = await Permission.microphone.request();
+    if (status.isGranted) {
+      // 🚨 [핵심 수정] 타이머를 가장 먼저 시작! (AI 로딩 기다리지 않음)
+      print("⏱️ 타이머 강제 시작");
+      _startTimer(); 
 
-      // 2.모델 로드
-      // print("🔍 모델 로딩 시도..."); 
-      _aiService.loadModel();
-      await Future.delayed(const Duration(milliseconds: 1500));
-      print("✅ 모델 로딩 완료! 다음 단계로 넘어갑니다.");
-      // 3. AI 분석 시작 (구독)
-      _startAnalysis();
+      // [안전장치 2] 모델 로딩도 try-catch로 감쌈
+      try {
+        await _aiService.loadModel();
+        if (mounted) {
+          print("✅ 모델 로딩 완료. 분석 시작.");
+          _startAnalysis();
+        }
+      } catch (e) {
+        print("🔴 모델 로딩 실패: $e");
+        if (mounted) {
+          setState(() => _currentSound = "AI 연결 실패");
+        }
+      }
     } else {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("마이크 권한이 필요합니다.")));
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("마이크 권한이 거부되었습니다.")));
       }
     }
   }
 
   void _startAnalysis() {
-    _aiSubscription = _aiService.startRecognition().listen((result) {
-      // 결과 예시: "Snoring 0.85" (소리종류 확률)
-      String label = result["recognitionResult"].toString();
-      
-      setState(() {
-        _currentSound = label; // 화면에 실시간 표시
-      });
+    _aiSubscription?.cancel();
 
-      // 'Snoring'(코골이) 라벨이 포함되어 있으면 카운트 증가
-      // (Teachable Machine에서 라벨 이름을 'Snoring' 또는 '코골이'로 설정해야 함)
-      if (label.contains("Snoring") || label.contains("코골이")) {
-        setState(() {
-          _snoreCount++;
-        });
-        print("🚨 코골이 감지됨! (총 $_snoreCount회)");
+    
+    _aiSubscription = _aiService.startRecognition().listen((result) {
+      String label = result["recognitionResult"].toString();
+
+      if (label.contains("NaN") || label.isEmpty) {
+        label = "0 Background Noise";
       }
+
+      if (mounted) {
+        setState(() {
+          _currentSound = label;
+        });
+      }
+
+      // 1번: 잠꼬대
+      if (label.startsWith('1') || label.contains("잠꼬대")) {
+         if (mounted) {
+            setState(() {
+              _sleepTalkCount++;
+              _currentSound = "🗣️ 잠꼬대 감지됨 (녹음 중...)";
+            });
+         }
+      } 
+      // 2번: 코골이
+      else if (label.startsWith('2') || label.contains("코골이")) {
+        if (mounted) {
+          setState(() {
+            _snoreCount++;
+          });
+        }
+      }
+      
+    }, onError: (e) {
+      print("Error: $e");
+      // 에러 나도 1초 뒤 재시도
+      Future.delayed(const Duration(seconds: 1), () {
+        if (mounted && !_isPaused) _startAnalysis();
+      });
     });
-    print("👂 AI가 실시간으로 분석 중입니다...");
   }
 
   @override
   void dispose() {
     _timer?.cancel();
-    _aiSubscription?.cancel(); // 구독 해제
-    _aiService.stopRecognition(); // AI 종료
+    _aiSubscription?.cancel();
+    _aiService.stopRecognition();
+    _aiService.dispose(); 
+    WakelockPlus.disable(); 
     super.dispose();
   }
 
@@ -92,22 +133,27 @@ class _SleepRecordingScreenState extends State<SleepRecordingScreen> {
     });
   }
 
-  // 일시정지 (AI도 같이 멈춤)
   void _togglePause() {
     setState(() {
       _isPaused = !_isPaused;
     });
     if (_isPaused) {
-      _aiService.stopRecognition(); // 듣기 중단
+      _aiService.stopRecognition();
     } else {
-      _startAnalysis(); // 다시 듣기
+      _startAnalysis();
     }
   }
 
-  // --- 저장 및 종료 로직 ---
+  String _formatTime(int totalSeconds) {
+    int hours = totalSeconds ~/ 3600;
+    int minutes = (totalSeconds % 3600) ~/ 60;
+    int seconds = totalSeconds % 60;
+    return '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+  }
+
   Future<void> _stopAndSave() async {
     _timer?.cancel();
-
+    
     bool? confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -116,8 +162,8 @@ class _SleepRecordingScreenState extends State<SleepRecordingScreen> {
         actions: [
           TextButton(
             onPressed: () {
-              _startTimer(); // 취소 시 타이머 재개
-              if (!_isPaused) _startAnalysis(); // AI 재개
+              _startTimer();
+              if (!_isPaused) _startAnalysis();
               Navigator.pop(context, false);
             },
             child: const Text('취소'),
@@ -132,57 +178,52 @@ class _SleepRecordingScreenState extends State<SleepRecordingScreen> {
 
     if (confirm != true) return;
 
-    // 1. AI 완전 종료
     _aiSubscription?.cancel();
     _aiService.stopRecognition();
+    WakelockPlus.disable();
 
     final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
+    if (user == null) {
+        if(mounted) Navigator.pop(context);
+        return;
+    }
 
-    // 2. 점수 계산 (간단 알고리즘)
-    // 기본 100점에서 코골이 1회당 1점씩 감점
-    int sleepScore = 100 - _snoreCount;
+    int sleepScore = 100 - (_snoreCount * 2) - (_sleepTalkCount * 1);
     if (sleepScore < 0) sleepScore = 0;
 
     try {
       if (mounted) {
-        showDialog(context: context, builder: (c) => const Center(child: CircularProgressIndicator(color: Colors.white)));
+        showDialog(
+          context: context, 
+          barrierDismissible: false,
+          builder: (c) => const Center(child: CircularProgressIndicator(color: Colors.white))
+        );
       }
 
-      // 3. Firestore 저장 (파일 경로는 없음!)
       await FirebaseFirestore.instance.collection('sleep_records').add({
         'userId': user.uid,
         'startTime': Timestamp.fromDate(_startTime),
         'endTime': Timestamp.now(),
-        'durationSeconds': _secondsElapsed, // [중요] 기존 기능: 수면 시간 저장
-        
-        // [추가] AI 분석 결과 저장
+        'durationSeconds': _secondsElapsed,
         'sleepScore': sleepScore,
         'snoreCount': _snoreCount,
-        'analysisType': 'On-Device AI', // 분석 방식 표시
-        'hasAudioFile': false, // 파일 없음
-        
+        'sleepTalkCount': _sleepTalkCount,
+        'analysisType': 'On-Device AI',
+        'hasAudioFile': _sleepTalkCount > 0,
         'createdAt': FieldValue.serverTimestamp(),
       });
 
       if (mounted) {
-        Navigator.pop(context); // 로딩 닫기
-        Navigator.pop(context); // 화면 닫기
+        Navigator.pop(context); 
+        Navigator.pop(context); 
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("수면 시간 및 점수($sleepScore점) 저장 완료!")),
+          SnackBar(content: Text("수면 기록 저장 완료! (점수: $sleepScore점)")),
         );
       }
     } catch (e) {
       if (mounted) Navigator.pop(context);
       print("저장 에러: $e");
     }
-  }
-
-  String _formatTime(int totalSeconds) {
-    int hours = totalSeconds ~/ 3600;
-    int minutes = (totalSeconds % 3600) ~/ 60;
-    int seconds = totalSeconds % 60;
-    return '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
   }
 
   @override
@@ -203,7 +244,6 @@ class _SleepRecordingScreenState extends State<SleepRecordingScreen> {
               _buildMoonVisual(),
               const SizedBox(height: 50),
               
-              // 타이머 표시
               Text(
                 _formatTime(_secondsElapsed),
                 style: const TextStyle(
@@ -212,7 +252,6 @@ class _SleepRecordingScreenState extends State<SleepRecordingScreen> {
                 ),
               ),
               
-              // [NEW] 실시간 분석 상태 표시 UI
               const SizedBox(height: 20),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
@@ -223,12 +262,13 @@ class _SleepRecordingScreenState extends State<SleepRecordingScreen> {
                 child: Column(
                   children: [
                     Text(
-                      "AI 분석 중: $_currentSound", // 예: "Snoring 98%"
+                      "AI 분석 상태: $_currentSound", 
                       style: const TextStyle(color: Colors.purpleAccent, fontWeight: FontWeight.bold),
+                      textAlign: TextAlign.center,
                     ),
                     const SizedBox(height: 5),
                     Text(
-                      "감지된 코골이: $_snoreCount회",
+                      "코골이: $_snoreCount회 | 잠꼬대: $_sleepTalkCount회",
                       style: const TextStyle(color: Colors.white70),
                     ),
                   ],
@@ -246,7 +286,6 @@ class _SleepRecordingScreenState extends State<SleepRecordingScreen> {
     );
   }
 
-  // --- 기존 UI 위젯들 ---
   Widget _buildAppBar() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 10.0),

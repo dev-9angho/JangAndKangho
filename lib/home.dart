@@ -1,15 +1,22 @@
 import 'package:flutter/material.dart';
-import 'package:jangnkangho/music.dart';
+import 'package:jangnkangho/sleep_record.dart';
+import 'package:lottie/lottie.dart';
+import 'music.dart';
 import 'package:provider/provider.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:url_launcher/url_launcher.dart'; // [NEW] 브라우저 열기용 패키지
+import 'package:url_launcher/url_launcher.dart';
 import 'auth_service.dart';
 import 'sleep_start_page.dart';
 import 'sleep_analysis_page.dart';
-import 'package:jangnkangho/screens/mypage.dart'; 
-// [NEW] 추천 서비스 임포트
-import 'services/recommend_service.dart'; 
+import 'package:jangnkangho/screens/mypage.dart';
+import 'services/recommend_service.dart';
+import 'sleep_day_summary_page.dart';
+import 'sleep_record.dart';
+import 'settings_page.dart';
+import 'support_page.dart';
+import 'app_settings.dart';
+import 'app_localizations.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -22,8 +29,9 @@ class _HomePageState extends State<HomePage> {
   // 수면 알람 시간 상태
   TimeOfDay? _sleepAlarmTime;
 
-  // [NEW] 추천 서비스 인스턴스 (Recommendation Service Instance)
-  final RecommendationService _recommendationService = RecommendationService();
+  // 추천 서비스 인스턴스
+  final RecommendationService _recommendationService =
+      RecommendationService();
 
   // 알람 설정 Time Picker 띄우기
   Future<void> _selectAlarmTime(BuildContext context) async {
@@ -31,14 +39,12 @@ class _HomePageState extends State<HomePage> {
       context: context,
       initialTime: _sleepAlarmTime ?? TimeOfDay.now(),
       builder: (context, child) {
+        final theme = Theme.of(context);
         return Theme(
-          data: ThemeData.light().copyWith(
-            colorScheme: const ColorScheme.light(
-              primary: Color(0xFF7A4EC9), // 헤더 및 선택 색상
-              onSurface: Color(0xFF1E0C42), // 텍스트 색상
-            ),
-            buttonTheme: const ButtonThemeData(
-              textTheme: ButtonTextTheme.primary,
+          data: theme.copyWith(
+            colorScheme: theme.colorScheme.copyWith(
+              primary: const Color(0xFF7A4EC9),
+              onSurface: theme.colorScheme.onSurface,
             ),
           ),
           child: child!,
@@ -52,7 +58,8 @@ class _HomePageState extends State<HomePage> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('수면 알람을 ${_sleepAlarmTime!.format(context)} (으)로 설정했습니다.'),
+            content: Text(
+                '수면 알람을 ${_sleepAlarmTime!.format(context)} (으)로 설정했습니다.'),
             duration: const Duration(seconds: 2),
           ),
         );
@@ -68,16 +75,24 @@ class _HomePageState extends State<HomePage> {
     return (user?.isAnonymous ?? false ? "G" : "U");
   }
 
-  // --- [NEW] 시간 포맷 변환 함수 ---
+  // 시간 포맷 변환 함수 (초 → 한글)
   String _formatDuration(int seconds) {
-    if (seconds < 60) return '$seconds초'; // 1분 미만은 초 단위 표시
+    if (seconds < 60) return '$seconds초';
     int h = seconds ~/ 3600;
     int m = (seconds % 3600) ~/ 60;
     if (h > 0) return '$h시간 $m분';
     return '$m분';
   }
 
-  // --- [NEW] URL 열기 함수 ---
+  // HH:mm 포맷 (DateTime → "22:30")
+  String _formatTimeHM(DateTime? dt) {
+    if (dt == null) return '--:--';
+    final hh = dt.hour.toString().padLeft(2, '0');
+    final mm = dt.minute.toString().padLeft(2, '0');
+    return '$hh:$mm';
+  }
+
+  // URL 열기 함수
   Future<void> _launchURL(BuildContext context, String? urlString) async {
     if (urlString == null || urlString.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -89,12 +104,11 @@ class _HomePageState extends State<HomePage> {
     final Uri url = Uri.parse(urlString);
     try {
       if (await canLaunchUrl(url)) {
-        await launchUrl(url, mode: LaunchMode.externalApplication); // 외부 브라우저로 열기
+        await launchUrl(url, mode: LaunchMode.externalApplication);
       } else {
-        // 일부 기기 호환성을 위해 강제 실행 시도
         await launchUrl(url, mode: LaunchMode.externalApplication);
       }
-    } catch (e) {
+    } catch (_) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text("링크를 열 수 없습니다.")),
@@ -103,17 +117,124 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  // 특정 요일 카드 클릭 시: 해당 요일 수면 요약 페이지로 이동
+  Future<void> _openSleepSummaryForWeekday(
+    BuildContext context,
+    User user,
+    int weekdayIndex, // 0=월, 6=일
+    String weekdayLabel,
+  ) async {
+    try {
+      final now = DateTime.now();
+      final monday = now.subtract(Duration(days: now.weekday - 1));
+      final targetDay = monday.add(Duration(days: weekdayIndex));
+
+      final startOfDay =
+          DateTime(targetDay.year, targetDay.month, targetDay.day);
+      final endOfDay = startOfDay.add(const Duration(days: 1));
+
+      final querySnapshot = await FirebaseFirestore.instance
+          .collection('sleep_records')
+          .where('userId', isEqualTo: user.uid)
+          .where('startTime',
+              isGreaterThanOrEqualTo: Timestamp.fromDate(startOfDay))
+          .where('startTime', isLessThan: Timestamp.fromDate(endOfDay))
+          .orderBy('startTime', descending: false)
+          .get();
+
+      if (querySnapshot.docs.isEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('해당 요일의 수면 기록이 없습니다.')),
+        );
+        return;
+      }
+
+      int totalSeconds = 0;
+      int totalScore = 0;
+      int count = 0;
+      DateTime? firstBed;
+      DateTime? lastWake;
+
+      for (final doc in querySnapshot.docs) {
+        final data = doc.data() as Map<String, dynamic>;
+        final startTs = data['startTime'] as Timestamp?;
+        final endTs = data['endTime'] as Timestamp?;
+        final duration = data['durationSeconds'] as int? ?? 0;
+        final score = data['sleepScore'] as int? ?? 0;
+
+        totalSeconds += duration;
+        totalScore += score;
+        count++;
+
+        if (startTs != null) {
+          final dt = startTs.toDate();
+          if (firstBed == null || dt.isBefore(firstBed)) {
+            firstBed = dt;
+          }
+        }
+        if (endTs != null) {
+          final dt = endTs.toDate();
+          if (lastWake == null || dt.isAfter(lastWake)) {
+            lastWake = dt;
+          }
+        }
+      }
+
+      final avgScore = count > 0 ? (totalScore ~/ count) : 0;
+
+      String evaluation;
+      if (avgScore >= 80) {
+        evaluation = '매우 좋음';
+      } else if (avgScore >= 50) {
+        evaluation = '보통';
+      } else if (avgScore > 0) {
+        evaluation = '개선 필요';
+      } else {
+        evaluation = '데이터 없음';
+      }
+
+      final record = SleepRecord(
+        weekday: weekdayLabel,
+        bedTime: _formatTimeHM(firstBed),
+        wakeTime: _formatTimeHM(lastWake),
+        totalMinutes: totalSeconds ~/ 60,
+        score: avgScore,
+        evaluation: evaluation,
+        tips: const [],
+      );
+
+      if (!mounted) return;
+
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => SleepDaySummaryPage(record: record),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('수면 기록을 불러오는 중 오류가 발생했습니다: $e')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final user = Provider.of<User?>(context);
     final authService = Provider.of<AuthService>(context, listen: false);
+    final settings = context.watch<AppSettings>();
+    final theme = Theme.of(context);
+    final primary = theme.colorScheme.primary;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF7F7F7), // 밝은 배경색
+      backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppBar(
-        title: const Text('Sleep Mate - 홈', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-        backgroundColor: const Color(0xFF1E0C42),
-        foregroundColor: Colors.white,
+        title: Text(
+          settings.t('home_title'),
+          style: const TextStyle(fontWeight: FontWeight.bold),
+        ),
         actions: [
           IconButton(
             icon: const Icon(Icons.logout),
@@ -130,74 +251,98 @@ class _HomePageState extends State<HomePage> {
           children: <Widget>[
             UserAccountsDrawerHeader(
               accountName: Text(
-                  (user?.displayName != null && user!.displayName!.isNotEmpty)
-                      ? user.displayName!
-                      : (user?.isAnonymous ?? false ? "게스트 사용자" : "일반 사용자"),
-                  style: const TextStyle(fontWeight: FontWeight.bold)),
-              accountEmail: Text(user?.email ?? "이메일 없음"),
-              currentAccountPicture: CircleAvatar(
-                backgroundColor: Colors.white,
-                child: Text(
-                  _getInitials(user),
-                  style: const TextStyle(fontSize: 40.0, color: Color(0xFF1E0C42)),
-                ),
+                (user?.displayName != null &&
+                        user!.displayName!.isNotEmpty)
+                    ? user.displayName!
+                    : (user?.isAnonymous ?? false
+                        ? "게스트 사용자"
+                        : "일반 사용자"),
+                style: const TextStyle(fontWeight: FontWeight.bold),
               ),
-              decoration: const BoxDecoration(
-                color: Color(0xFF1E0C42),
+              accountEmail: Text(user?.email ?? "이메일 없음"),
+              currentAccountPicture: ClipOval(
+              child: Lottie.asset(
+                'assets/Lottie.json', // 👈 JSON 파일 경로
+                width: 90,                    // 👈 Drawer에 맞게 크기 조정 (선택 사항: 90x90 추천)
+                height: 90,                   // 👈 Drawer에 맞게 크기 조정
+                fit: BoxFit.cover,
               ),
             ),
-            const ListTile(
-              leading: Icon(Icons.home, color: Color(0xFF1E0C42)),
-              title: Text('홈', style: TextStyle(fontSize: 16)),
+              decoration: BoxDecoration(
+                color: primary,
+              ),
             ),
             ListTile(
-              leading: const Icon(Icons.person, color: Color(0xFF1E0C42)),
+              leading: Icon(Icons.home, color: primary),
+              title: const Text('홈', style: TextStyle(fontSize: 16)),
+            ),
+            ListTile(
+              leading: Icon(Icons.person, color: primary),
               title: const Text('마이페이지', style: TextStyle(fontSize: 16)),
               onTap: () {
                 Navigator.pop(context);
                 Navigator.push(
                   context,
-                  MaterialPageRoute(builder: (context) =>  MyPage()),
+                  MaterialPageRoute(builder: (context) => MyPage()),
                 );
               },
             ),
             ListTile(
-              leading: const Icon(Icons.analytics, color: Color(0xFF1E0C42)),
+              leading: Icon(Icons.analytics, color: primary),
               title: const Text('수면 분석', style: TextStyle(fontSize: 16)),
               onTap: () {
                 Navigator.pop(context);
                 Navigator.push(
                   context,
-                  MaterialPageRoute(builder: (context) => SleepAnalysisPage()),
+                  MaterialPageRoute(
+                      builder: (context) => const SleepAnalysisPage()),
                 );
               },
             ),
             ListTile(
-              leading: Icon(Icons.music_note, color: Color(0xFF1E0C42)),
-              title: Text('수면 음악과 테라피', style: TextStyle(fontSize: 16)),
+              leading: Icon(Icons.music_note, color: primary),
+              title: const Text('수면 음악과 테라피',
+                  style: TextStyle(fontSize: 16)),
               onTap: () {
-                Navigator.pop(context); // Drawer 닫기
+                Navigator.pop(context);
                 Navigator.push(
                   context,
-                  MaterialPageRoute(builder: (context) => SleepMusicPage()), // [NEW] 이동
+                  MaterialPageRoute(builder: (context) => SleepMusicPage()),
                 );
               },
             ),
             const Divider(),
-            const ListTile(
-              leading: Icon(Icons.share, color: Color(0xFF1E0C42)),
-              title: Text('나의 수면 패턴 공유', style: TextStyle(fontSize: 16)),
-            ),
-            const ListTile(
-              leading: Icon(Icons.settings, color: Color(0xFF1E0C42)),
-              title: Text('설정', style: TextStyle(fontSize: 16)),
-            ),
-            const ListTile(
-              leading: Icon(Icons.support_agent, color: Color(0xFF1E0C42)),
-              title: Text('고객 문의', style: TextStyle(fontSize: 16)),
+            ListTile(
+              leading: Icon(Icons.share, color: primary),
+              title:
+                  const Text('나의 수면 패턴 공유', style: TextStyle(fontSize: 16)),
             ),
             ListTile(
-              leading: const Icon(Icons.logout, color: Color(0xFF1E0C42)),
+              leading: Icon(Icons.settings, color: primary),
+              title: const Text('설정', style: TextStyle(fontSize: 16)),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (context) => const SettingsPage()),
+                );
+              },
+            ),
+            ListTile(
+              leading: Icon(Icons.support_agent, color: primary),
+              title: const Text('고객 문의', style: TextStyle(fontSize: 16)),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (context) => const SupportPage()),
+                );
+              },
+            ),
+            ListTile(
+              leading: Icon(Icons.logout, color: primary),
               title: const Text('로그아웃', style: TextStyle(fontSize: 16)),
               onTap: () async {
                 Navigator.pop(context);
@@ -213,25 +358,23 @@ class _HomePageState extends State<HomePage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              // 중앙 달 모양 섹션 (수정됨: user 파라미터 전달)
               _buildSleepStartSection(context, user),
               const SizedBox(height: 30),
-
-              const Text(
-                '주간 수면 패턴',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF1E0C42)),
+              Text(
+                settings.t('home_weekly_pattern'),
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: primary,
+                ),
               ),
               const SizedBox(height: 15),
               _buildWeeklyPatternSection(user),
               const SizedBox(height: 30),
-
-              _buildAlarmSettingSection(context),
+              _buildAlarmSettingSection(context, settings),
               const SizedBox(height: 30),
-
-              _buildAnalysisSummarySection(context,user),
+              _buildAnalysisSummarySection(context, user),
               const SizedBox(height: 30),
-
-              // [MODIFIED] 실제 기사를 불러오는 추천 섹션
               _buildRecommendationSection(context, user),
             ],
           ),
@@ -240,15 +383,18 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  // --- [MODIFIED] 중앙 달 모양 섹션 위젯 ---
+  // 중앙 달 모양 섹션
   Widget _buildSleepStartSection(BuildContext context, User? user) {
+    final settings = Provider.of<AppSettings>(context, listen: false);
+    final primary = Theme.of(context).colorScheme.primary;
+
     return Center(
       child: InkWell(
         onTap: () {
-          // 클릭 시 수면 시작 창으로 이동
           Navigator.push(
             context,
-            MaterialPageRoute(builder: (context) => const SleepRecordingScreen()),
+            MaterialPageRoute(
+                builder: (context) => const SleepRecordingScreen()),
           );
         },
         borderRadius: BorderRadius.circular(100),
@@ -261,11 +407,11 @@ class _HomePageState extends State<HomePage> {
                   width: 150,
                   height: 150,
                   decoration: BoxDecoration(
-                    color: const Color(0xFF5B39A3).withOpacity(0.8), // 배경색
+                    color: const Color(0xFF5B39A3).withOpacity(0.8),
                     shape: BoxShape.circle,
                     boxShadow: [
                       BoxShadow(
-                        color: const Color(0xFF1E0C42).withOpacity(0.3),
+                        color: primary.withOpacity(0.3),
                         blurRadius: 10,
                         offset: const Offset(0, 5),
                       ),
@@ -280,53 +426,72 @@ class _HomePageState extends State<HomePage> {
               ],
             ),
             const SizedBox(height: 10),
-            const Text(
-              '오늘의 취침',
+            Text(
+              settings.t('home_today_sleep'),
               style: TextStyle(
                 fontSize: 22,
                 fontWeight: FontWeight.bold,
-                color: Color(0xFF1E0C42),
+                color: primary,
               ),
             ),
-            // --- [NEW] 최근 수면 시간 표시 ---
-          if (user != null)
+            if (user != null)
               StreamBuilder<QuerySnapshot>(
                 stream: FirebaseFirestore.instance
                     .collection('sleep_records')
                     .where('userId', isEqualTo: user.uid)
-                    // "오늘 00시 00분 이후에 끝난" 모든 기록을 가져옵니다.
-                    .where('endTime', isGreaterThanOrEqualTo: Timestamp.fromDate(DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day))) 
+                    .where(
+                      'endTime',
+                      isGreaterThanOrEqualTo: Timestamp.fromDate(
+                        DateTime(
+                          DateTime.now().year,
+                          DateTime.now().month,
+                          DateTime.now().day,
+                        ),
+                      ),
+                    )
                     .snapshots(),
                 builder: (context, snapshot) {
-                  if (snapshot.hasError) return const Text('기록 불러오기 실패', style: TextStyle(fontSize: 12, color: Colors.grey));
-                  
-                  // 데이터가 없거나 비어있으면
-                  if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                    return const Padding(
-                      padding: EdgeInsets.only(top: 5.0),
-                      child: Text('터치하여 시작하기', style: TextStyle(fontSize: 16, color: Colors.grey)),
+                  if (snapshot.hasError) {
+                    return const Text(
+                      '기록 불러오기 실패',
+                      style: TextStyle(fontSize: 12, color: Colors.grey),
                     );
                   }
 
-                  // [핵심 로직] 가져온 모든 기록의 시간(durationSeconds)을 더합니다.
-                  int totalSecondsToday = 0;
-                  for (var doc in snapshot.data!.docs) {
-                    Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
-                    totalSecondsToday += (data['durationSeconds'] as int? ?? 0);
+                  if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                    return Padding(
+                      padding: const EdgeInsets.only(top: 5.0),
+                      child: Text(
+                        settings.t('home_tap_to_start'),
+                        style: const TextStyle(
+                            fontSize: 16, color: Colors.grey),
+                      ),
+                    );
                   }
 
-                  // 합산된 시간이 0이면 시작하기 문구 표시
+                  int totalSecondsToday = 0;
+                  for (var doc in snapshot.data!.docs) {
+                    Map<String, dynamic> data =
+                        doc.data() as Map<String, dynamic>;
+                    totalSecondsToday +=
+                        (data['durationSeconds'] as int? ?? 0);
+                  }
+
                   if (totalSecondsToday == 0) {
-                     return const Padding(
-                      padding: EdgeInsets.only(top: 5.0),
-                      child: Text('터치하여 시작하기', style: TextStyle(fontSize: 16, color: Colors.grey)),
+                    return Padding(
+                      padding: const EdgeInsets.only(top: 5.0),
+                      child: Text(
+                        settings.t('home_tap_to_start'),
+                        style: const TextStyle(
+                            fontSize: 16, color: Colors.grey),
+                      ),
                     );
                   }
 
                   return Padding(
                     padding: const EdgeInsets.only(top: 5.0),
                     child: Text(
-                      "${_formatDuration(totalSecondsToday)} 잤어요", // 총합 시간 표시
+                      "${_formatDuration(totalSecondsToday)} 잤어요",
                       style: const TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
@@ -342,8 +507,7 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-    // --- [MODIFIED] 주간 수면 패턴 섹션 (Firestore 연동) ---
-// --- [UPDATED] 주간 수면 패턴 섹션 (점수 표시 추가됨) ---
+  // 주간 수면 패턴 섹션 (점수 표시 + 요일 클릭)
   Widget _buildWeeklyPatternSection(User? user) {
     if (user == null) {
       return const Center(child: Text("로그인이 필요합니다."));
@@ -353,82 +517,92 @@ class _HomePageState extends State<HomePage> {
     DateTime monday = now.subtract(Duration(days: now.weekday - 1));
     DateTime startOfWeek = DateTime(monday.year, monday.month, monday.day);
 
+    final theme = Theme.of(context);
+    final primary = theme.colorScheme.primary;
+
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
           .collection('sleep_records')
           .where('userId', isEqualTo: user.uid)
-          .where('startTime', isGreaterThanOrEqualTo: Timestamp.fromDate(startOfWeek))
+          .where('startTime',
+              isGreaterThanOrEqualTo: Timestamp.fromDate(startOfWeek))
           .orderBy('startTime', descending: false)
           .snapshots(),
       builder: (context, snapshot) {
         if (snapshot.hasError) return const Text("데이터 로딩 실패");
         if (snapshot.connectionState == ConnectionState.waiting) {
-           return const SizedBox(height: 110, child: Center(child: CircularProgressIndicator()));
+          return const SizedBox(
+            height: 110,
+            child: Center(child: CircularProgressIndicator()),
+          );
         }
 
-        // 1. 데이터 집계용 변수 초기화
-        Map<int, int> weeklyDuration = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0};
-        Map<int, int> weeklyScoreSum = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0}; // [NEW] 점수 합계
-        Map<int, int> weeklyCount = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0};    // [NEW] 기록 횟수 (평균 계산용)
+        Map<int, int> weeklyDuration =
+            {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0};
+        Map<int, int> weeklyScoreSum =
+            {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0};
+        Map<int, int> weeklyCount =
+            {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0};
 
-        // 2. 데이터 집계
         if (snapshot.hasData) {
           for (var doc in snapshot.data!.docs) {
-            Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
+            Map<String, dynamic> data =
+                doc.data() as Map<String, dynamic>;
             Timestamp? start = data['startTime'];
             int duration = data['durationSeconds'] ?? 0;
-            int score = data['sleepScore'] ?? 0; // [NEW] 점수 가져오기
+            int score = data['sleepScore'] ?? 0;
 
             if (start != null) {
               int weekday = start.toDate().weekday;
-              
-              weeklyDuration[weekday] = (weeklyDuration[weekday] ?? 0) + duration;
-              weeklyScoreSum[weekday] = (weeklyScoreSum[weekday] ?? 0) + score; // 점수 누적
-              weeklyCount[weekday] = (weeklyCount[weekday] ?? 0) + 1;           // 횟수 증가
+              weeklyDuration[weekday] =
+                  (weeklyDuration[weekday] ?? 0) + duration;
+              weeklyScoreSum[weekday] =
+                  (weeklyScoreSum[weekday] ?? 0) + score;
+              weeklyCount[weekday] =
+                  (weeklyCount[weekday] ?? 0) + 1;
             }
           }
         }
 
         List<String> weekDays = ['월', '화', '수', '목', '금', '토', '일'];
-        
+
         return SizedBox(
-          height: 110, // [TIP] 점수 텍스트가 들어가야 해서 높이를 조금 늘렸습니다.
+          height: 110,
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
             itemCount: 7,
-            separatorBuilder: (context, index) => const SizedBox(width: 15),
+            separatorBuilder: (context, index) =>
+                const SizedBox(width: 15),
             itemBuilder: (context, index) {
               int weekdayKey = index + 1;
               int totalSeconds = weeklyDuration[weekdayKey] ?? 0;
-              
-              // [NEW] 평균 점수 계산
+
               int totalScore = weeklyScoreSum[weekdayKey] ?? 0;
               int count = weeklyCount[weekdayKey] ?? 0;
-              int avgScore = count > 0 ? (totalScore ~/ count) : 0; // 0으로 나누기 방지
+              int avgScore = count > 0 ? (totalScore ~/ count) : 0;
 
               String timeStr = _formatSimpleDuration(totalSeconds);
-              
-              // 상태 판단 (점수가 있으면 점수 기준, 없으면 시간 기준)
+
               Color statusColor;
               if (totalSeconds == 0) {
                 statusColor = Colors.grey.shade300;
-              } else if (avgScore >= 80) { // 80점 이상이면 초록
+              } else if (avgScore >= 80) {
                 statusColor = Colors.green.shade400;
-              } else if (avgScore >= 50) { // 50점 이상이면 주황
+              } else if (avgScore >= 50) {
                 statusColor = Colors.orange.shade400;
-              } else { // 그 외 빨강
+              } else {
                 statusColor = Colors.redAccent.shade200;
               }
 
-              return Container(
-                width: 70, // 카드 너비
+              final card = Container(
+                width: 70,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: theme.cardColor,
                   borderRadius: BorderRadius.circular(12),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.grey.withOpacity(0.1),
+                      color: Colors.black.withOpacity(0.05),
                       spreadRadius: 1,
                       blurRadius: 5,
                       offset: const Offset(0, 3),
@@ -438,14 +612,15 @@ class _HomePageState extends State<HomePage> {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    // 요일
                     Text(
                       weekDays[index],
-                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF1E0C42)),
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        color: primary,
+                      ),
                     ),
                     const SizedBox(height: 4),
-                    
-                    // 상태 점 (색상)
                     Container(
                       width: 8,
                       height: 8,
@@ -455,25 +630,44 @@ class _HomePageState extends State<HomePage> {
                       ),
                     ),
                     const SizedBox(height: 6),
-                    
-                    // 수면 시간
                     Text(
                       timeStr,
-                      style: TextStyle(fontSize: 12, color: Colors.grey.shade700, fontWeight: FontWeight.w500),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: theme.textTheme.bodySmall?.color
+                            ?.withOpacity(0.7),
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
-                    
-                    // [NEW] 점수 표시
                     const SizedBox(height: 2),
                     Text(
-                      totalSeconds == 0 ? "-" : "$avgScore점", // 기록 없으면 하이픈
+                      totalSeconds == 0 ? "-" : "$avgScore점",
                       style: TextStyle(
-                        fontSize: 11, 
+                        fontSize: 11,
                         fontWeight: FontWeight.bold,
-                        color: totalSeconds == 0 ? Colors.grey.shade300 : const Color(0xFF7A4EC9), // 보라색 포인트
+                        color: totalSeconds == 0
+                            ? Colors.grey.shade300
+                            : const Color(0xFF7A4EC9),
                       ),
                     ),
                   ],
                 ),
+              );
+
+              if (totalSeconds == 0) {
+                return card;
+              }
+
+              return GestureDetector(
+                onTap: () {
+                  _openSleepSummaryForWeekday(
+                    context,
+                    user,
+                    index,
+                    weekDays[index],
+                  );
+                },
+                child: card,
               );
             },
           ),
@@ -481,6 +675,7 @@ class _HomePageState extends State<HomePage> {
       },
     );
   }
+
   // 간단 시간 변환 헬퍼 함수 (ex: 7h 30m)
   String _formatSimpleDuration(int seconds) {
     if (seconds == 0) return '-';
@@ -488,31 +683,42 @@ class _HomePageState extends State<HomePage> {
     int m = (seconds % 3600) ~/ 60;
     return '${h}h ${m}m';
   }
-    
 
-  // 수면 알람 설정 섹션 위젯 (기존 유지)
-  Widget _buildAlarmSettingSection(BuildContext context) {
+  // 수면 알람 설정 섹션
+  Widget _buildAlarmSettingSection(
+      BuildContext context, AppSettings settings) {
+    final theme = Theme.of(context);
+    final primary = theme.colorScheme.primary;
+
     String alarmTimeDisplay = _sleepAlarmTime == null
-        ? '알람을 설정해주세요'
+        ? settings.t('home_set_alarm_button')
         : _sleepAlarmTime!.format(context);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          '수면 알람을 설정하세요',
-          style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF1E0C42)),
+        Text(
+          settings.t('home_set_alarm'),
+          style: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            color: primary,
+          ),
         ),
         const SizedBox(height: 15),
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+          padding:
+              const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: theme.cardColor,
             borderRadius: BorderRadius.circular(15),
-            border: Border.all(color: const Color(0xFF7A4EC9), width: 2),
+            border: Border.all(
+              color: const Color(0xFF7A4EC9),
+              width: 2,
+            ),
             boxShadow: [
               BoxShadow(
-                color: Colors.grey.withOpacity(0.1),
+                color: Colors.black.withOpacity(0.05),
                 spreadRadius: 1,
                 blurRadius: 5,
                 offset: const Offset(0, 3),
@@ -522,27 +728,39 @@ class _HomePageState extends State<HomePage> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                alarmTimeDisplay,
-                style: TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.w600,
-                  color: _sleepAlarmTime == null ? Colors.grey.shade500 : const Color(0xFF1E0C42),
+              Flexible(
+                child: Text(
+                  alarmTimeDisplay,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.w600,
+                    color: _sleepAlarmTime == null
+                        ? Colors.grey.shade500
+                        : primary,
+                  ),
                 ),
               ),
+              const SizedBox(width: 8),
               ElevatedButton.icon(
                 onPressed: () => _selectAlarmTime(context),
                 icon: const Icon(Icons.alarm, color: Colors.white),
                 label: const Text(
                   '알람 설정',
-                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF7A4EC9),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 10),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 15,
+                    vertical: 10,
+                  ),
                 ),
               ),
             ],
@@ -552,22 +770,27 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  // 간단 수면 분석 요약 섹션 위젯 (기존 유지)
-// --- [UPDATED] 간단 수면 분석 요약 섹션 (실제 데이터 연동) ---
+  // 오늘의 수면 점수 섹션
   Widget _buildAnalysisSummarySection(BuildContext context, User? user) {
+    final primary = Theme.of(context).colorScheme.primary;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          '간단 수면 분석 요약',
-          style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF1E0C42)),
+        Text(
+          '오늘의 수면 점수',
+          style: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            color: primary,
+          ),
         ),
         const SizedBox(height: 15),
         Container(
           width: double.infinity,
           padding: const EdgeInsets.all(20),
           decoration: BoxDecoration(
-            color: const Color(0xFF1E0C42),
+            color: primary,
             borderRadius: BorderRadius.circular(15),
             boxShadow: [
               BoxShadow(
@@ -579,9 +802,13 @@ class _HomePageState extends State<HomePage> {
             ],
           ),
           child: user == null
-              ? const Center(child: Text("로그인이 필요합니다.", style: TextStyle(color: Colors.white70)))
+              ? const Center(
+                  child: Text(
+                    "로그인이 필요합니다.",
+                    style: TextStyle(color: Colors.white70),
+                  ),
+                )
               : StreamBuilder<QuerySnapshot>(
-                  // 최근 10개의 기록을 가져와서 '평소'와 비교합니다.
                   stream: FirebaseFirestore.instance
                       .collection('sleep_records')
                       .where('userId', isEqualTo: user.uid)
@@ -589,69 +816,88 @@ class _HomePageState extends State<HomePage> {
                       .limit(10)
                       .snapshots(),
                   builder: (context, snapshot) {
-                    // 1. 로딩 중이거나 에러
-                    if (snapshot.hasError) return const Text("분석 데이터를 불러올 수 없습니다.", style: TextStyle(color: Colors.white70));
-                    if (!snapshot.hasData) return const Text("데이터 분석 중...", style: TextStyle(color: Colors.white70));
-
-                    final docs = snapshot.data!.docs;
-
-                    // 2. 데이터가 없을 때
-                    if (docs.isEmpty) {
+                    if (snapshot.hasError) {
                       return const Text(
-                        "아직 수면 기록이 없습니다.\n오늘 밤 첫 기록을 시작해보세요!",
-                        style: TextStyle(fontSize: 16, height: 1.5, color: Colors.white70),
+                        "분석 데이터를 불러올 수 없습니다.",
+                        style: TextStyle(color: Colors.white70),
+                      );
+                    }
+                    if (!snapshot.hasData) {
+                      return const Text(
+                        "데이터 분석 중...",
+                        style: TextStyle(color: Colors.white70),
                       );
                     }
 
-                    // 3. 데이터 분석 로직
-                    // (1) 가장 최신 기록 (지난밤)
-                    final lastRecord = docs.first.data() as Map<String, dynamic>;
-                    int lastDuration = lastRecord['durationSeconds'] ?? 0;
+                    final docs = snapshot.data!.docs;
+                    if (docs.isEmpty) {
+                      return const Text(
+                        "아직 수면 기록이 없습니다.\n오늘 밤 첫 기록을 시작해보세요!",
+                        style: TextStyle(
+                          fontSize: 16,
+                          height: 1.5,
+                          color: Colors.white70,
+                        ),
+                      );
+                    }
+
+                    final lastRecord =
+                        docs.first.data() as Map<String, dynamic>;
+                    int lastDuration =
+                        lastRecord['durationSeconds'] ?? 0;
                     int lastScore = lastRecord['sleepScore'] ?? 0;
 
-                    // (2) 평소 수면 시간 계산 (최신 기록 제외한 나머지들의 평균)
                     String comparisonText = "";
                     if (docs.length > 1) {
                       int totalPastDuration = 0;
                       int count = 0;
-                      // docs[1]부터 끝까지 반복
                       for (int i = 1; i < docs.length; i++) {
-                        totalPastDuration += (docs[i]['durationSeconds'] as int? ?? 0);
+                        totalPastDuration +=
+                            (docs[i]['durationSeconds'] as int? ?? 0);
                         count++;
                       }
-                      int avgDuration = count > 0 ? totalPastDuration ~/ count : 0;
+                      int avgDuration =
+                          count > 0 ? totalPastDuration ~/ count : 0;
                       int diff = lastDuration - avgDuration;
-                      int diffMin = (diff.abs() ~/ 60); // 분 단위 차이
+                      int diffMin = (diff.abs() ~/ 60);
 
                       if (diff > 0) {
-                        comparisonText = "평소보다 $diffMin분 더 주무셨습니다.";
+                        comparisonText =
+                            "평소보다 $diffMin분 더 주무셨습니다.";
                       } else {
-                        comparisonText = "평소보다 $diffMin분 덜 주무셨습니다.";
+                        comparisonText =
+                            "평소보다 $diffMin분 덜 주무셨습니다.";
                       }
                     } else {
-                      comparisonText = "첫 기록이라 비교할 데이터가 없습니다.";
+                      comparisonText =
+                          "첫 기록이라 비교할 데이터가 없습니다.";
                     }
 
-                    // (3) 수면 점수 기반 멘트 생성
                     String qualityText = "";
                     if (lastScore >= 80) {
-                      qualityText = "깊은 수면이 충분하여 수면의 질이 매우 양호합니다.";
+                      qualityText =
+                          "깊은 수면이 충분하여 수면의 질이 매우 양호합니다.";
                     } else if (lastScore >= 50) {
-                      qualityText = "수면 효율은 보통 수준입니다.";
+                      qualityText =
+                          "수면 효율은 보통 수준입니다.";
                     } else {
-                      qualityText = "수면 질이 다소 낮습니다. 수면 환경을 점검해보세요.";
+                      qualityText =
+                          "수면 질이 다소 낮습니다. 수면 환경을 점검해보세요.";
                     }
 
-                    // (4) 최종 멘트 조합
-                    // 예: "지난밤 수면 시간은 7시간 30분으로, 평소보다 15분 더 주무셨습니다. 깊은 수면이 충분하여..."
-                    String finalMessage = "지난밤 수면 시간은 ${_formatDurationKorean(lastDuration)}으로, $comparisonText $qualityText";
+                    String finalMessage =
+                        "지난밤 수면 시간은 ${_formatDurationKorean(lastDuration)}으로, $comparisonText $qualityText";
 
                     return Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
                           finalMessage,
-                          style: const TextStyle(fontSize: 16, height: 1.5, color: Colors.white70),
+                          style: const TextStyle(
+                            fontSize: 16,
+                            height: 1.5,
+                            color: Colors.white70,
+                          ),
                         ),
                         const SizedBox(height: 15),
                         Align(
@@ -660,12 +906,18 @@ class _HomePageState extends State<HomePage> {
                             onPressed: () {
                               Navigator.push(
                                 context,
-                                MaterialPageRoute(builder: (context) => const SleepAnalysisPage()),
+                                MaterialPageRoute(
+                                  builder: (context) =>
+                                      const SleepAnalysisPage(),
+                                ),
                               );
                             },
-                            icon: const Icon(Icons.arrow_forward, color: Colors.white),
+                            icon: const Icon(
+                              Icons.arrow_forward,
+                              color: Colors.white,
+                            ),
                             label: const Text(
-                              '수면 분석 상세 보기',
+                              '자세히 보기',
                               style: TextStyle(
                                 color: Colors.white,
                                 fontWeight: FontWeight.bold,
@@ -683,53 +935,67 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  // 시간 포맷 헬퍼 함수 (예: 7시간 30분)
   String _formatDurationKorean(int seconds) {
     int h = seconds ~/ 3600;
     int m = (seconds % 3600) ~/ 60;
     if (h > 0) return "$h시간 $m분";
     return "$m분";
-  } // --- [MODIFIED] 질 좋은 수면을 위한 추천 섹션 (API 연동) ---
+  }
+
+  // 질 좋은 수면을 위한 추천 섹션
   Widget _buildRecommendationSection(BuildContext context, User? user) {
+    final theme = Theme.of(context);
+    final primary = theme.colorScheme.primary;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
+        Text(
           '질 좋은 수면을 위한 추천',
-          style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF1E0C42)),
+          style: TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            color: primary,
+          ),
         ),
         const SizedBox(height: 15),
         Container(
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: theme.cardColor,
             borderRadius: BorderRadius.circular(15),
             boxShadow: [
               BoxShadow(
-                color: Colors.grey.withOpacity(0.1),
+                color: Colors.black.withOpacity(0.05),
                 spreadRadius: 1,
                 blurRadius: 5,
                 offset: const Offset(0, 3),
               ),
             ],
           ),
-          // 사용자별 추천 기사 로딩 FutureBuilder
           child: user == null
-              ? const Center(child: Padding(padding: EdgeInsets.all(20), child: Text("로그인 후 확인 가능합니다.")))
+              ? const Center(
+                  child: Padding(
+                    padding: EdgeInsets.all(20),
+                    child: Text("로그인 후 확인 가능합니다."),
+                  ),
+                )
               : FutureBuilder<List<Article>>(
-                  future: _recommendationService.getPersonalizedArticles(user.uid),
+                  future: _recommendationService
+                      .getPersonalizedArticles(user.uid),
                   builder: (context, snapshot) {
-                    // 1. 로딩 중
-                    if (snapshot.connectionState == ConnectionState.waiting) {
+                    if (snapshot.connectionState ==
+                        ConnectionState.waiting) {
                       return const Center(
                         child: Padding(
                           padding: EdgeInsets.all(20.0),
-                          child: CircularProgressIndicator(color: Color(0xFF7A4EC9)),
+                          child: CircularProgressIndicator(
+                            color: Color(0xFF7A4EC9),
+                          ),
                         ),
                       );
                     }
-                    
-                    // 2. 에러 발생
+
                     if (snapshot.hasError) {
                       return const Padding(
                         padding: EdgeInsets.all(20.0),
@@ -737,7 +1003,6 @@ class _HomePageState extends State<HomePage> {
                       );
                     }
 
-                    // 3. 데이터 표시
                     final articles = snapshot.data ?? [];
                     if (articles.isEmpty) {
                       return const Padding(
@@ -749,20 +1014,33 @@ class _HomePageState extends State<HomePage> {
                     return Column(
                       children: articles.map((article) {
                         return ListTile(
-                          leading: const Icon(Icons.article, color: Color(0xFF7A4EC9)),
+                          leading: const Icon(
+                            Icons.article,
+                            color: Color(0xFF7A4EC9),
+                          ),
                           title: Text(
                             article.title,
-                            style: const TextStyle(fontSize: 16, color: Color(0xFF1E0C42), fontWeight: FontWeight.bold),
+                            style: TextStyle(
+                              fontSize: 16,
+                              color: primary,
+                              fontWeight: FontWeight.bold,
+                            ),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
                           subtitle: Text(
-                            article.category, // 카테고리 표시 (예: "불면증 극복")
-                            style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                            article.category,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey[600],
+                            ),
                           ),
-                          trailing: const Icon(Icons.open_in_new, size: 20, color: Colors.grey),
+                          trailing: const Icon(
+                            Icons.open_in_new,
+                            size: 20,
+                            color: Colors.grey,
+                          ),
                           onTap: () {
-                            // [수정됨] 클릭 시 URL 열기
                             _launchURL(context, article.url);
                           },
                         );

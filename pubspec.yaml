@@ -17,6 +17,7 @@ dependencies:
   flutter:
     # 'sdk:'는 flutter:보다 2칸 더 들여씁니다.
     sdk: flutter
+    
 
   # --- UI & Utilities ---
   # 아래 모든 패키지는 'flutter:'와 같은 레벨(2칸)로 들여씁니다.
@@ -42,8 +43,9 @@ dependencies:
   record: ^6.1.2
   permission_handler: ^12.0.1
   tflite_audio: ^0.3.0
-
-
+  share_plus: ^12.0.1
+  audioplayers: ^6.5.1
+  wakelock_plus: ^1.1.0 # 화면 꺼짐 방지
 # 'dev_dependencies:' 키워드는 'dependencies:'와 같은 레벨(0칸)입니다.
 dev_dependencies:
   # 'flutter_test:'는 dev_dependencies:보다 2칸 들여씁니다.
@@ -67,6 +69,7 @@ flutter:
     # 2. 모델과 라벨 파일의 경로를 정확히 적어주세요.
     - assets/soundclassifier_with_metadata.tflite  
     - assets/labels.txt
+    - assets/Lottie.json
 
   # fonts:
   #   - family: Schyler
